@@ -22,6 +22,9 @@ TARGET_SCREEN_DENSITY := 420
 # Kernel
 TARGET_KERNEL_CONFIG += vendor/sony/pdx237.config
 DO_NOT_REBUILD_KERNEL := true
+# Ép không kbuild lại nếu đã có Image. Xóa Image để build kernel mới:
+#   rm -f out/target/product/pdx237/obj/KERNEL_OBJ/arch/arm64/boot/Image
+FORCE_SKIP_KERNEL_BUILD := true
 
 # Properties
 TARGET_ODM_PROP += $(DEVICE_PATH)/odm.prop
