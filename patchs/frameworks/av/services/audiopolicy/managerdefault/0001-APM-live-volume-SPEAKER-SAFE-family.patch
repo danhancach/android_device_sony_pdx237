@@ -1,0 +1,66 @@
+From c8069c814d5b55dec96bea47e1bef4c3add84d19 Mon Sep 17 00:00:00 2001
+From: danhancach <111163507+danhancach@users.noreply.github.com>
+Date: Tue, 13 Oct 2026 15:09:01 +0900
+Subject: [PATCH] APM: live volume for SPEAKER/SPEAKER_SAFE family
+
+---
+ .../managerdefault/AudioPolicyManager.cpp     | 34 ++++++++++++++++---
+ 1 file changed, 29 insertions(+), 5 deletions(-)
+
+diff --git a/services/audiopolicy/managerdefault/AudioPolicyManager.cpp b/services/audiopolicy/managerdefault/AudioPolicyManager.cpp
+index 7094ca341b..b04b64ad6e 100644
+--- a/services/audiopolicy/managerdefault/AudioPolicyManager.cpp
++++ b/services/audiopolicy/managerdefault/AudioPolicyManager.cpp
+@@ -4106,13 +4106,35 @@ status_t AudioPolicyManager::setVolumeIndexForGroup(volume_group_t group, uid_t
+             }
+ 
+             DeviceTypeSet outputDevices = desc->devices().types();
+-            if (outputDevices.erase(AUDIO_DEVICE_OUT_SPEAKER_SAFE)) {
+-                outputDevices.insert(AUDIO_DEVICE_OUT_SPEAKER);
++            // SPEAKER va SPEAKER_SAFE cung family volume (cung DEVICE_CATEGORY_SPEAKER).
++            // UI/forVolume alias SAFE->SPEAKER; playback am bao route SAFE (speaker_safe_out).
++            // Khong remap SAFE->SPEAKER tren outputDevices: setVolume yeu cau device nam trong
++            // supportedDevices() cua output (SAFE-only se reject SPEAKER -> gain khong doi ngay).
++            DeviceTypeSet devicesForMatch = outputDevices;
++            const bool outputHasSpeakerFamily =
++                    outputDevices.count(AUDIO_DEVICE_OUT_SPEAKER) != 0
++                    || outputDevices.count(AUDIO_DEVICE_OUT_SPEAKER_SAFE) != 0;
++            if (outputHasSpeakerFamily) {
++                devicesForMatch.insert(AUDIO_DEVICE_OUT_SPEAKER);
++                devicesForMatch.insert(AUDIO_DEVICE_OUT_SPEAKER_SAFE);
+             }
+             if (device != AUDIO_DEVICE_OUT_DEFAULT_FOR_VOLUME) {
+-                if (outputDevices.find(device) == outputDevices.end()
+-                        || attrDevices.find(Volume::getDeviceForVolume(outputDevices))
+-                            == attrDevices.end()) {
++                const bool deviceIsSpeakerFamily =
++                        device == AUDIO_DEVICE_OUT_SPEAKER
++                        || device == AUDIO_DEVICE_OUT_SPEAKER_SAFE;
++                const bool outputMatchesDevice =
++                        devicesForMatch.find(device) != devicesForMatch.end()
++                        || (deviceIsSpeakerFamily && outputHasSpeakerFamily);
++                audio_devices_t outputVolDevice =
++                        Volume::getDeviceForVolume(outputDevices);
++                // getDeviceForVolume alias SAFE->SPEAKER; attrDevices co the chua SPEAKER
++                // (forVolume) hoac SAFE (insert tu AudioService mirror).
++                const bool attrMatchesOutput =
++                        attrDevices.find(outputVolDevice) != attrDevices.end()
++                        || (outputHasSpeakerFamily
++                            && (attrDevices.count(AUDIO_DEVICE_OUT_SPEAKER) != 0
++                                || attrDevices.count(AUDIO_DEVICE_OUT_SPEAKER_SAFE) != 0));
++                if (!outputMatchesDevice || !attrMatchesOutput) {
+                     continue; // next output
+                 }
+             }
+@@ -4133,6 +4155,8 @@ status_t AudioPolicyManager::setVolumeIndexForGroup(volume_group_t group, uid_t
+             //FIXME: workaround for truncated touch sounds
+             // delayed volume change for system stream to be removed when the problem is
+             // handled by system UI
++            // Truyen outputDevices that (SAFE neu dang SAFE) de setVolume/HW gain match port.
++            // Index da sync SPEAKER<->SAFE o AudioService; curve category SPEAKER giong nhau.
+             status_t volStatus = checkAndSetVolume(curves, vs, index, desc, outputDevices,
+                     /*adjustAttenuation*/true, (vs == toVolumeSource(AUDIO_STREAM_SYSTEM, false)) ?
+                     TOUCH_SOUND_FIXED_DELAY_MS : 0);
+-- 
+2.53.0
+

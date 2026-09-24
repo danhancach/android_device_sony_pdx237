@@ -1,0 +1,33 @@
+From b3127829b46220f8386d10cbc5a63413da2f5af7 Mon Sep 17 00:00:00 2001
+From: danhancach <111163507+danhancach@users.noreply.github.com>
+Date: Tue, 13 Oct 2026 15:09:02 +0900
+Subject: [PATCH] init: remove disable-client-composition-cache
+
+Change-Id: If67f6d8e9b8dc79e286b5a2ab9b50fb73040caf4
+---
+ init/init.qti.display_boot.sh | 2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/init/init.qti.display_boot.sh b/init/init.qti.display_boot.sh
+index dbc9db36bb..0e9f8afc23 100644
+--- a/init/init.qti.display_boot.sh
++++ b/init/init.qti.display_boot.sh
+@@ -82,7 +82,6 @@ case "$target" in
+         setprop vendor.display.enable_latch_media_content 1
+         setprop vendor.display.enable_inline_writeback 1
+         setprop vendor.display.timed_render_enable 1
+-        setprop debug.sf.disable_client_composition_cache 0
+         # set property for HHG
+         if [ "$subtype_id" -eq 1 ]; then
+             setprop vendor.display.disable_system_load_check 1
+@@ -108,7 +107,6 @@ case "$target" in
+         setprop vendor.display.enable_latch_media_content 1
+         setprop vendor.display.enable_inline_writeback 0
+         setprop vendor.display.timed_render_enable 1
+-        setprop debug.sf.disable_client_composition_cache 0
+         setprop vendor.display.enable_qsync_idle 1
+         ;;
+     esac
+-- 
+2.53.0
+
