@@ -1,0 +1,32 @@
+# Device-bound ROM patches (Sony / sm8550 / pdx237).
+# Dinh dang: <git-repo-relpath>|<patch-relpath-from-hub>
+# Dong bat dau # bi bo qua.
+
+# 1. system/media (FCC)
+system/media|system/media/0001-audio-fcc-limit-13-360ra.patch
+
+# 2. frameworks/av Sony port + prefer-builtin-mic
+frameworks/av|frameworks/av/0001-audioflinger-sony-port.patch
+frameworks/av|frameworks/av/0002-audiopolicy-sony-port.patch
+frameworks/av|frameworks/av/0003-media-sony-port.patch
+frameworks/av|frameworks/av/services/audiopolicy/enginedefault/src/prefer-builtin-mic-for-camcorder.patch
+frameworks/av|frameworks/av/services/audiopolicy/managerdefault/0001-APM-live-volume-SPEAKER-SAFE-family.patch
+
+# 3. frameworks/base (audio hardening — device)
+frameworks/base|frameworks/base/services/core/java/com/android/server/audio/disable-audio-hardening-by-property.patch
+frameworks/base|frameworks/base/services/core/java/com/android/server/audio/0001-AudioService-sync-SPEAKER-SAFE-volume-with-SPEAKER.patch
+
+# 4. hardware/qcom-caf primary-hal (sm8550): SSOT fork danhancach/android_hardware_qcom_audio-ar (evox)
+# Khong co file patch trong hub — chinh sua / merge tren fork.
+
+# 5. hardware/qcom-caf display (sm8550)
+hardware/qcom-caf/sm8550/display|hardware/qcom-caf/sm8550/display/init/remove-disable-client-composition-cache.patch
+hardware/qcom-caf/sm8550/display|hardware/qcom-caf/sm8550/display/services/config/src/include-mutex.patch
+
+# 6. system/vold (exFAT Sony utils)
+system/vold|system/vold/fs/exfat-sony-utils.patch
+
+# 7. packages (Xperia battery / LineageParts charging)
+# A12+A13 collapsed → battery-monitor-settings-entry.patch (commit f4cbca753978)
+packages/apps/Settings|packages/apps/Settings/battery-monitor-settings-entry.patch
+packages/apps/LineageParts|packages/apps/LineageParts/disable-charging-control-catalog.patch

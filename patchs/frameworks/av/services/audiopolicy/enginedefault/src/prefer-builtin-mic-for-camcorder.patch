@@ -1,0 +1,25 @@
+From e0ded814c2af55581353438d33fa2ab70bb05a47 Mon Sep 17 00:00:00 2001
+From: danhancach <111163507+danhancach@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 10:47:30 +0900
+Subject: [PATCH] audiopolicy: prefer builtin mic for camcorder
+
+---
+ services/audiopolicy/enginedefault/src/Engine.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/services/audiopolicy/enginedefault/src/Engine.cpp b/services/audiopolicy/enginedefault/src/Engine.cpp
+index 25c223b3a4..fe8ed212fa 100644
+--- a/services/audiopolicy/enginedefault/src/Engine.cpp
++++ b/services/audiopolicy/enginedefault/src/Engine.cpp
+@@ -712,7 +712,7 @@ sp<DeviceDescriptor> Engine::getDeviceForInputSource(audio_source_t inputSource)
+     case AUDIO_SOURCE_CAMCORDER:
+         // For a device without built-in mic, adding usb device
+         device = availableDevices.getFirstExistingDevice({
+-                AUDIO_DEVICE_IN_BACK_MIC, AUDIO_DEVICE_IN_BUILTIN_MIC,
++                AUDIO_DEVICE_IN_BUILTIN_MIC, AUDIO_DEVICE_IN_BACK_MIC,
+                 AUDIO_DEVICE_IN_USB_DEVICE});
+         break;
+     case AUDIO_SOURCE_VOICE_DOWNLINK:
+-- 
+2.53.0
+

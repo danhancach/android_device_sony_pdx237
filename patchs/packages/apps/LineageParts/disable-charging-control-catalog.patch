@@ -1,0 +1,28 @@
+From 301c93e232a28b7b4c87d2a8a29456dba0b29e3a Mon Sep 17 00:00:00 2001
+From: danhancach <111163507+danhancach@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 10:47:22 +0900
+Subject: [PATCH] LineageParts: disable charging control catalog
+
+---
+ res/xml/parts_catalog.xml | 5 +----
+ 1 file changed, 1 insertion(+), 4 deletions(-)
+
+diff --git a/res/xml/parts_catalog.xml b/res/xml/parts_catalog.xml
+index c227627..9682c38 100644
+--- a/res/xml/parts_catalog.xml
++++ b/res/xml/parts_catalog.xml
+@@ -18,10 +18,7 @@
+ <parts-catalog xmlns:android="http://schemas.android.com/apk/res/android"
+                xmlns:lineage="http://schemas.android.com/apk/res-auto">
+ 
+-    <part android:key="charging_control"
+-          android:title="@string/charging_control_title"
+-          android:fragment="org.lineageos.lineageparts.health.ChargingControlSettings"
+-          lineage:xmlRes="@xml/charging_control_settings" />
++    <!-- charging_control: tat — XperiaCharger thay the Battery Care tren pdx237 -->
+ 
+     <part android:key="battery_lights"
+           android:title="@string/battery_light_title"
+-- 
+2.53.0
+

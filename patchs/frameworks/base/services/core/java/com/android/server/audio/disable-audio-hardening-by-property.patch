@@ -1,0 +1,26 @@
+From 483a4184873ce503f110743c9704a808ce1100eb Mon Sep 17 00:00:00 2001
+From: danhancach <111163507+danhancach@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 10:48:09 +0900
+Subject: [PATCH] AudioService: disable audio hardening by property
+
+---
+ services/core/java/com/android/server/audio/AudioService.java | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/services/core/java/com/android/server/audio/AudioService.java b/services/core/java/com/android/server/audio/AudioService.java
+index 5aa7f374ed9f..29c4570e2b3f 100644
+--- a/services/core/java/com/android/server/audio/AudioService.java
++++ b/services/core/java/com/android/server/audio/AudioService.java
+@@ -1532,6 +1532,9 @@ public class AudioService extends IAudioService.Stub
+         mSettings = settings;
+ 
+         mAudioPolicy = audioPolicy;
++        if (SystemProperties.getBoolean("ro.config.disable_audio_hardening", false)) {
++            mHardeningOverride.set(HardeningOverride.DISABLE);
++        }
+         mAudioPolicy.registerOnStartTask(() -> {
+             mAudioPolicy.setHardeningOverride((byte) mHardeningOverride.get());
+         });
+-- 
+2.53.0
+

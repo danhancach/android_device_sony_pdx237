@@ -1,0 +1,25 @@
+From da0ffea2a745a438552ae32fb1aefeaa2ae8dca7 Mon Sep 17 00:00:00 2001
+From: danhancach <111163507+danhancach@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 10:47:22 +0900
+Subject: [PATCH] config: include mutex in device_impl
+
+Change-Id: I84d7f626ff1e31f24ebcf88e30a2bbcb30f56cad
+---
+ services/config/src/device_impl.h | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/services/config/src/device_impl.h b/services/config/src/device_impl.h
+index dd0e536448..2bcab73828 100644
+--- a/services/config/src/device_impl.h
++++ b/services/config/src/device_impl.h
+@@ -71,6 +71,7 @@
+ #include <log/log.h>
+ #include <config/device_interface.h>
+ #include <map>
++#include <mutex>
+ #include <utility>
+ #include <string>
+ #include <vector>
+-- 
+2.53.0
+
