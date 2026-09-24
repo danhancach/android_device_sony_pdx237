@@ -1,0 +1,552 @@
+diff --git a/hal/Android.bp b/hal/Android.bp
+index b62d2810b..4260dd6be 100644
+--- a/hal/Android.bp
++++ b/hal/Android.bp
+@@ -94,6 +94,8 @@ target_board_platform_cc_library_shared {
+ 
+     include_dirs: [
+         "system/media/audio_effects/include",
++        "hardware/qcom-caf/sm8550/audio/pal/ipc/HwBinders/pal_ipc_server/inc",
++        "hardware/qcom-caf/sm8550/audio/agm/ipc/HwBinders/agm_ipc_service/inc",
+     ],
+ 
+     local_include_dirs: ["inc"],
+@@ -118,6 +120,7 @@ target_board_platform_cc_library_shared {
+         "libhidlbase",
+         "liblog",
+         "libprocessgroup",
++        "libtinyalsa",
+         "libutils",
+     ] + select(soong_config_variable("qtiaudio", "feature_pal_hidl"), {
+         "true": [
+diff --git a/hal/AudioStream.cpp b/hal/AudioStream.cpp
+index 065f6cb86..6e568527a 100644
+--- a/hal/AudioStream.cpp
++++ b/hal/AudioStream.cpp
+@@ -47,6 +47,11 @@
+ #include <thread>
+ 
+ #include "PalApi.h"
++#include <tinyalsa/asoundlib.h>
++#include <fstream>
++#include <sstream>
++#include <string>
++#include <cstring>
+ #include <audio_effects/effect_aec.h>
+ #include <audio_effects/effect_ns.h>
+ #include "audio_extn.h"
+@@ -76,6 +81,22 @@ static bool is_pcm_format(audio_format_t format)
+     return false;
+ }
+ 
++static bool ahalSkipSpeakerSafeCustomKey() {
++    // Mac dinh skip: speaker-safe custom_key + SPEAKER_SAFE de mat loa phu / volume.
++    // Dat false de khoi phuc hanh vi CAF goc.
++    return property_get_bool("vendor.audio.hal.skip_speaker_safe_custom_key", true);
++}
++
++static void maybeSetSpeakerSafeCustomKey(pal_device *device) {
++    if (!ahalSkipSpeakerSafeCustomKey()) {
++        strlcpy(device->custom_config.custom_key, "speaker-safe",
++                sizeof(device->custom_config.custom_key));
++        AHAL_INFO("Setting custom key as %s", device->custom_config.custom_key);
++        return;
++    }
++    AHAL_DBG("Skipping speaker-safe custom_key; Sony PAL manages it");
++}
++
+ static int get_hdr_mode() {
+     std::shared_ptr<AudioDevice> adevice = AudioDevice::GetInstance();
+     if (property_get_bool("vendor.audio.hdr.spf.record.enable", false)) {
+@@ -2276,17 +2297,20 @@ int StreamOutPrimary::Standby() {
+         if (usecase_ == USECASE_AUDIO_PLAYBACK_WITH_HAPTICS && pal_haptics_stream_handle) {
+             ret = pal_stream_close(pal_haptics_stream_handle);
+             pal_haptics_stream_handle = NULL;
+-            if (hapticBuffer) {
+-                free (hapticBuffer);
+-                hapticBuffer = NULL;
+-            }
+-            hapticsBufSize = 0;
+             if (hapticsDevice) {
+                 free(hapticsDevice);
+                 hapticsDevice = NULL;
+             }
+         }
+     }
++    if (usecase_ == USECASE_AUDIO_PLAYBACK_WITH_HAPTICS) {
++        releaseHapticMixerLocked();
++        if (hapticBuffer) {
++            free(hapticBuffer);
++            hapticBuffer = NULL;
++            hapticsBufSize = 0;
++        }
++    }
+     if (karaoke) {
+         ret = AudExtn.karaoke_stop();
+         if (ret) {
+@@ -2436,9 +2460,7 @@ int StreamOutPrimary::RouteStream(const std::set<audio_devices_t>& new_devices,
+ 
+             if ((AudioExtn::audio_devices_cmp(mAndroidOutDevices, AUDIO_DEVICE_OUT_SPEAKER_SAFE)) &&
+                                    (mPalOutDeviceIds[i] == PAL_DEVICE_OUT_SPEAKER)) {
+-                strlcpy(mPalOutDevice[i].custom_config.custom_key, "speaker-safe",
+-                        sizeof(mPalOutDevice[i].custom_config.custom_key));
+-                AHAL_INFO("Setting custom key as %s", mPalOutDevice[i].custom_config.custom_key);
++                maybeSetSpeakerSafeCustomKey(&mPalOutDevice[i]);
+             }
+ 
+             if (((AudioExtn::audio_devices_cmp(mAndroidOutDevices, AUDIO_DEVICE_OUT_SPEAKER)) &&
+@@ -2918,6 +2940,9 @@ int StreamOutPrimary::Open() {
+ 
+     if (usecase_ == USECASE_AUDIO_PLAYBACK_WITH_HAPTICS) {
+         channels = audio_channel_count_from_out_mask(config_.channel_mask & ~AUDIO_CHANNEL_HAPTIC_ALL);
++        // Mono audio + haptic: mo stereo, nhan ban L=R de ca 2 loa Sony
++        if (channels == 1)
++            channels = 2;
+     }
+     ch_info.channels = channels;
+     ch_info.ch_map[0] = PAL_CHMAP_CHANNEL_FL;
+@@ -3078,6 +3103,7 @@ int StreamOutPrimary::Open() {
+         ret = -EINVAL;
+         goto error_open;
+     }
++    AHAL_DBG("StreamOutPrimary::Open: Pal Stream success");
+ 
+     /* set cached volume if any, dont return failure back up */
+     if (volume_) {
+@@ -3089,29 +3115,40 @@ int StreamOutPrimary::Open() {
+     }
+ 
+     if (usecase_ == USECASE_AUDIO_PLAYBACK_WITH_HAPTICS) {
+-        ch_info.channels = audio_channel_count_from_out_mask(config_.channel_mask & AUDIO_CHANNEL_HAPTIC_ALL);
++        // Nguon haptic thuong 1ch; cs40l2x can BCLK 1.536MHz = 48k*16bit*2ch.
++        uint8_t srcHapCh = audio_channel_count_from_out_mask(
++                config_.channel_mask & AUDIO_CHANNEL_HAPTIC_ALL);
++        if (srcHapCh == 0)
++            srcHapCh = 1;
++        ch_info.channels = 2;
+         ch_info.ch_map[0] = PAL_CHMAP_CHANNEL_FL;
+-        if (ch_info.channels > 1)
+-            ch_info.ch_map[1] = PAL_CHMAP_CHANNEL_FR;
++        ch_info.ch_map[1] = PAL_CHMAP_CHANNEL_FR;
+ 
+         hapticsStreamAttributes.type = PAL_STREAM_HAPTICS;
+         hapticsStreamAttributes.flags = (pal_stream_flags_t)0;
+         hapticsStreamAttributes.direction = PAL_AUDIO_OUTPUT;
++        hapticsStreamAttributes.info.opt_stream_info.haptics_type =
++                PAL_STREAM_HAPTICS_RINGTONE;
+         hapticsStreamAttributes.out_media_config.sample_rate = DEFAULT_OUTPUT_SAMPLING_RATE;
+         hapticsStreamAttributes.out_media_config.bit_width = CODEC_BACKEND_DEFAULT_BIT_WIDTH;
+         hapticsStreamAttributes.out_media_config.aud_fmt_id = PAL_AUDIO_FMT_PCM_S16_LE;
+         hapticsStreamAttributes.out_media_config.ch_info = ch_info;
+ 
+-        if (!hapticsDevice) {
+-            hapticsDevice = (struct pal_device*) calloc(1, sizeof(struct pal_device));
+-        }
+-
+-        if (hapticsDevice) {
++        // pdx237/SPF: BE MI2S→cs40 chap nhan hw_params nhung WRITEI luon EINVAL
++        // (khong host DMA). Du lieu haptic qua PAL/AGM; tinymix Source=PCM +
++        // A2H unmute. ASP_RX bat qua sysfs asp_enable (vibrator external control).
++        // persist.vendor.audio.haptic_alsa_prefer=false de bo ep mixer (debug).
++        bool setHapticMixer = property_get_bool(
++                "persist.vendor.audio.haptic_alsa_prefer", true);
++        if (hapticsDevice ||
++            (hapticsDevice = (struct pal_device*)calloc(
++                     1, sizeof(struct pal_device)))) {
+             hapticsDevice->id = PAL_DEVICE_OUT_HAPTICS_DEVICE;
+             hapticsDevice->config.sample_rate = DEFAULT_OUTPUT_SAMPLING_RATE;
+             hapticsDevice->config.bit_width = CODEC_BACKEND_DEFAULT_BIT_WIDTH;
+             hapticsDevice->config.ch_info = ch_info;
+             hapticsDevice->config.aud_fmt_id = PAL_AUDIO_FMT_PCM_S16_LE;
++            AHAL_DBG("haptic PAL open src_ch=%u -> device 2ch (cs40 BCLK)", srcHapCh);
+ 
+             ret = pal_stream_open (&hapticsStreamAttributes,
+                                    1,
+@@ -3121,8 +3158,17 @@ int StreamOutPrimary::Open() {
+                                    &pal_callback,
+                                    (uint64_t)this,
+                                    &pal_haptics_stream_handle);
+-            if (ret)
+-                AHAL_ERR("Pal Haptics Stream Open Error (%x)", ret);
++            if (ret) {
++                AHAL_ERR("Pal Haptics Stream Open Error (%x); audio-only continue",
++                         ret);
++                pal_haptics_stream_handle = NULL;
++                ret = 0;
++            } else {
++                int hapDev = 0;
++                findCs40HapticAlsaDevice(&hapticAlsaCard_, &hapDev);
++                if (setHapticMixer)
++                    setHapticsMixerSourcePcmLocked();
++            }
+         } else {
+             AHAL_ERR("Failed to allocate memory for hapticsDevice");
+         }
+@@ -3333,6 +3379,86 @@ int StreamOutPrimary::GetOutputUseCase(audio_output_flags_t halStreamFlags)
+     return usecase;
+ }
+ 
++bool StreamOutPrimary::findCs40HapticAlsaDevice(int* card, int* device) {
++    // Tim PCM playback gan cs40l2x (vd. MI2S-LPAIF-RX-PRIMARY cs40l2x-codec)
++    std::ifstream pcmFile("/proc/asound/pcm");
++    if (!pcmFile.is_open()) {
++        AHAL_ERR("cannot open /proc/asound/pcm");
++        return false;
++    }
++    std::string line;
++    while (std::getline(pcmFile, line)) {
++        if (line.find("cs40l2x") == std::string::npos)
++            continue;
++        if (line.find("playback") == std::string::npos)
++            continue;
++        int c = 0, d = 0;
++        if (sscanf(line.c_str(), "%d-%d:", &c, &d) == 2) {
++            *card = c;
++            *device = d;
++            AHAL_DBG("found cs40 haptic ALSA pcm %d-%d", c, d);
++            return true;
++        }
++    }
++    AHAL_ERR("cs40l2x playback PCM not found in /proc/asound/pcm");
++    return false;
++}
++
++void StreamOutPrimary::releaseHapticMixerLocked() {
++    if (hapticMixer_) {
++        mixer_close(hapticMixer_);
++        hapticMixer_ = nullptr;
++        hapticMixerCard_ = -1;
++    }
++}
++
++struct mixer* StreamOutPrimary::getHapticMixerLocked() {
++    int card = hapticAlsaCard_;
++    if (card < 0) {
++        int dev = 0;
++        if (!findCs40HapticAlsaDevice(&card, &dev))
++            card = 0;
++        hapticAlsaCard_ = card;
++    }
++    if (hapticMixer_ && hapticMixerCard_ == card)
++        return hapticMixer_;
++    releaseHapticMixerLocked();
++    hapticMixer_ = mixer_open(card);
++    if (!hapticMixer_) {
++        AHAL_ERR("mixer_open card %d failed", card);
++        return nullptr;
++    }
++    hapticMixerCard_ = card;
++    return hapticMixer_;
++}
++
++int StreamOutPrimary::setHapticsMixerSourcePcmLocked() {
++    struct mixer *mx = getHapticMixerLocked();
++    if (!mx)
++        return -ENODEV;
++
++    int ret = 0;
++    struct mixer_ctl *src = mixer_get_ctl_by_name(mx, "Haptics Source");
++    if (src) {
++        ret = mixer_ctl_set_enum_by_string(src, "PCM");
++        AHAL_DBG("mixer Haptics Source=PCM card=%d ret=%d", hapticAlsaCard_, ret);
++    } else {
++        AHAL_ERR("mixer ctl Haptics Source not found on card %d", hapticAlsaCard_);
++        ret = -ENOENT;
++    }
++
++    // Unmute A2H: AUDIOLEFT/RIGHT ENABLE can =1 (mute On -> khong rung).
++    // Bleed loa xu ly bang tach kenh HAL, khong can mute A2H.
++    struct mixer_ctl *a2hMute = mixer_get_ctl_by_name(mx, "A2H Mute Switch");
++    if (a2hMute) {
++        int mret = mixer_ctl_set_value(a2hMute, 0, 0);
++        mret |= mixer_ctl_set_value(a2hMute, 1, 0);
++        AHAL_DBG("mixer A2H Mute=Off ret=%d", mret);
++    }
++
++    return ret;
++}
++
+ ssize_t StreamOutPrimary::splitAndWriteAudioHapticsStream(const void *buffer, size_t bytes)
+ {
+      ssize_t ret = 0;
+@@ -3345,11 +3471,29 @@ ssize_t StreamOutPrimary::splitAndWriteAudioHapticsStream(const void *buffer, si
+      uint32_t frameSize = channelCount * bytesPerSample;
+      uint32_t frameCount = bytes / frameSize;
+ 
+-     // Calculate Haptics Buffer size
+-     uint8_t hapticsChannelCount = hapticsStreamAttributes.out_media_config.ch_info.channels;
+-     uint32_t hapticsFrameSize = bytesPerSample * hapticsChannelCount;
+-     uint32_t audioFrameSize = frameSize - hapticsFrameSize;
+-     uint32_t totalHapticsBufferSize = frameCount * hapticsFrameSize;
++     // Kenh haptic trong buffer AF (thuong 1); PAL/cs40 mo 2ch.
++     uint8_t srcHapCh = audio_channel_count_from_out_mask(
++             config_.channel_mask & AUDIO_CHANNEL_HAPTIC_ALL);
++     if (srcHapCh == 0)
++         srcHapCh = 1;
++     uint8_t palHapCh = hapticsStreamAttributes.out_media_config.ch_info.channels;
++     if (palHapCh == 0)
++         palHapCh = 2;
++     uint32_t srcHapFrameSize = bytesPerSample * srcHapCh;
++     uint32_t palHapFrameSize = bytesPerSample * palHapCh;
++     uint32_t srcAudioFrameSize = frameSize - srcHapFrameSize;
++     uint32_t totalHapticsBufferSize = frameCount * palHapFrameSize;
++     bool upmixHapMonoToStereo = (srcHapCh == 1 && palHapCh == 2);
++
++     // PAL audio stream co the mo stereo (upmix mono) — xem Open()
++     uint8_t palAudioCh = streamAttributes_.out_media_config.ch_info.channels;
++     if (palAudioCh == 0)
++         palAudioCh = (srcAudioFrameSize / bytesPerSample);
++     if (palAudioCh == 0)
++         palAudioCh = 1;
++     uint32_t palAudioFrameSize = bytesPerSample * palAudioCh;
++     bool upmixMonoToStereo = (srcAudioFrameSize == bytesPerSample && palAudioCh == 2);
++     uint32_t totalAudioBufferSize = frameCount * palAudioFrameSize;
+ 
+      if (!hapticBuffer) {
+          allocHapticsBuffer = true;
+@@ -3369,31 +3513,71 @@ ssize_t StreamOutPrimary::splitAndWriteAudioHapticsStream(const void *buffer, si
+          hapticsBufSize = totalHapticsBufferSize;
+      }
+ 
+-     audioBuf.buffer = (uint8_t *)buffer;
+-     audioBuf.size = frameCount * audioFrameSize;
+-     audioBuf.offset = 0;
++     // Buffer audio rieng neu upmix (khong ghi de buffer nguon)
++     uint8_t* audioOut = nullptr;
++     bool freeAudioOut = false;
++     if (upmixMonoToStereo) {
++         audioOut = (uint8_t*)calloc(1, totalAudioBufferSize);
++         if (!audioOut) {
++             AHAL_ERR("Failed to allocate mem for stereo upmix");
++             return -ENOMEM;
++         }
++         freeAudioOut = true;
++     } else {
++         audioOut = (uint8_t*)buffer;
++     }
++
+      hapticBuf.buffer  = hapticBuffer;
+-     hapticBuf.size = frameCount * hapticsFrameSize;
++     hapticBuf.size = totalHapticsBufferSize;
+      hapticBuf.offset = 0;
+ 
+      for (size_t i = 0; i < frameCount; i++) {
+-         memcpy((uint8_t *)(audioBuf.buffer) + audIndex, (uint8_t *)(audioBuf.buffer) + srcIndex,
+-                audioFrameSize);
+-         audIndex += audioFrameSize;
+-         srcIndex += audioFrameSize;
+-
+-         memcpy((uint8_t *)(hapticBuf.buffer) + hapIndex, (uint8_t *)(audioBuf.buffer) + srcIndex,
+-                    hapticsFrameSize);
+-         hapIndex += hapticsFrameSize;
+-         srcIndex += hapticsFrameSize;
++         if (upmixMonoToStereo) {
++             // L = R = mono sample
++             memcpy(audioOut + audIndex, (uint8_t*)buffer + srcIndex, srcAudioFrameSize);
++             memcpy(audioOut + audIndex + srcAudioFrameSize,
++                    (uint8_t*)buffer + srcIndex, srcAudioFrameSize);
++             audIndex += palAudioFrameSize;
++         } else {
++             memcpy(audioOut + audIndex, (uint8_t*)buffer + srcIndex, srcAudioFrameSize);
++             audIndex += srcAudioFrameSize;
++         }
++         srcIndex += srcAudioFrameSize;
++
++         if (upmixHapMonoToStereo) {
++             // L=R=haptic: CS40/A2H thuong lay ASP_RX; R=0 co the lam
++             // DSP coi nhu khong co tin hieu (tuy firmware).
++             memcpy((uint8_t*)(hapticBuf.buffer) + hapIndex,
++                    (uint8_t*)buffer + srcIndex, srcHapFrameSize);
++             memcpy((uint8_t*)(hapticBuf.buffer) + hapIndex + srcHapFrameSize,
++                    (uint8_t*)buffer + srcIndex, srcHapFrameSize);
++             hapIndex += palHapFrameSize;
++             srcIndex += srcHapFrameSize;
++         } else {
++             memcpy((uint8_t*)(hapticBuf.buffer) + hapIndex,
++                    (uint8_t*)buffer + srcIndex, srcHapFrameSize);
++             hapIndex += srcHapFrameSize;
++             srcIndex += srcHapFrameSize;
++         }
+      }
+ 
+-     // write audio data
++     audioBuf.buffer = audioOut;
++     audioBuf.size = totalAudioBufferSize;
++     audioBuf.offset = 0;
++
++     // Tach audio/haptic; mixer PCM chi set luc open/start (tranh underrun).
+      ret = pal_stream_write(pal_stream_handle_, &audioBuf);
+-     // write haptics data
+-     ret = pal_stream_write(pal_haptics_stream_handle, &hapticBuf);
++     if (freeAudioOut)
++         free(audioOut);
++     if (ret < 0)
++         return ret;
++     if (pal_haptics_stream_handle) {
++         ssize_t hret = pal_stream_write(pal_haptics_stream_handle, &hapticBuf);
++         if (hret < 0)
++             AHAL_ERR("haptics write failed %zd, audio already written", hret);
++     }
+ 
+-     return (ret < 0 ? ret : bytes);
++     return bytes;
+ }
+ 
+ ssize_t StreamOutPrimary::onWriteError(size_t bytes, ssize_t ret) {
+@@ -3456,14 +3640,21 @@ ssize_t StreamOutPrimary::configurePalOutputStream() {
+                     config_.sample_rate, flags_);
+         }
+ 
+-        if (usecase_ == USECASE_AUDIO_PLAYBACK_WITH_HAPTICS) {
++        if (usecase_ == USECASE_AUDIO_PLAYBACK_WITH_HAPTICS &&
++            pal_haptics_stream_handle) {
+             ret = pal_stream_start(pal_haptics_stream_handle);
+             if (ret) {
+-                AHAL_ERR("failed to start haptics stream. ret=%zd", ret);
+-                ATRACE_END();
++                // Khong huy ca audio khi haptic start fail (Sony/ACDB).
++                AHAL_ERR("failed to start haptics stream. ret=%zd; audio-only",
++                         ret);
+                 pal_stream_close(pal_haptics_stream_handle);
+                 pal_haptics_stream_handle = NULL;
+-                return -EINVAL;
++                ret = 0;
++            } else {
++                // SonyCirrusDVS/haptics-dev mac dinh A2H; ep PCM sau start.
++                if (property_get_bool("persist.vendor.audio.haptic_alsa_prefer",
++                                      true))
++                    setHapticsMixerSourcePcmLocked();
+             }
+         }
+         if (karaoke) {
+@@ -3631,7 +3822,8 @@ ssize_t StreamOutPrimary::write(const void *buffer, size_t bytes)
+         if (ret >= 0) {
+             ret = (ret * inputBitWidth) / outputBitWidth;
+         }
+-    } else if (usecase_ == USECASE_AUDIO_PLAYBACK_WITH_HAPTICS && pal_haptics_stream_handle) {
++    } else if (usecase_ == USECASE_AUDIO_PLAYBACK_WITH_HAPTICS) {
++        // Luon tach buffer: stream audio mo voi channel khong haptic.
+         ret = splitAndWriteAudioHapticsStream(buffer, bytes);
+     } else {
+         ret = pal_stream_write(pal_stream_handle_, &palBuffer);
+@@ -3803,6 +3995,9 @@ StreamOutPrimary::StreamOutPrimary(
+     hapticsDevice = NULL;
+     hapticBuffer = NULL;
+     hapticsBufSize = 0;
++    hapticAlsaCard_ = -1;
++    hapticMixer_ = nullptr;
++    hapticMixerCard_ = -1;
+     writeAt.tv_sec = 0;
+     writeAt.tv_nsec = 0;
+     mBytesWritten = 0;
+@@ -3868,10 +4063,6 @@ StreamOutPrimary::StreamOutPrimary(
+                 config->channel_mask = AUDIO_CHANNEL_OUT_STEREO;
+             if (config->format == AUDIO_FORMAT_DEFAULT)
+                 config->format = AUDIO_FORMAT_PCM_16_BIT;
+-            memcpy(&config_, config, sizeof(struct audio_config));
+-            AHAL_INFO("sample rate = %d channel_mask = %#x fmt = %#x",
+-                      config->sample_rate, config->channel_mask,
+-                      config->format);
+ 
+         }
+     }
+@@ -3892,6 +4083,11 @@ StreamOutPrimary::StreamOutPrimary(
+         }
+     }
+ 
++    memcpy(&config_, config, sizeof(struct audio_config));
++    AHAL_INFO("sample rate = %d channel_mask = %#x fmt = %#x",
++              config->sample_rate, config->channel_mask,
++              config->format);
++
+     usecase_ = GetOutputUseCase(flags_);
+     if (address) {
+         strlcpy((char *)&address_, address, AUDIO_DEVICE_MAX_ADDRESS_LEN);
+@@ -3928,13 +4124,31 @@ StreamOutPrimary::StreamOutPrimary(
+     /* TODO: how to update based on stream parameters and see if device is supported */
+     for (int i = 0; i < mAndroidOutDevices.size(); i++) {
+         mPalOutDevice[i].id = mPalOutDeviceIds[i];
+-        if (AudioExtn::audio_devices_cmp(mAndroidOutDevices, audio_is_usb_out_device))
++        if (usecase_ == USECASE_AUDIO_PLAYBACK_OFFLOAD || usecase_ == USECASE_AUDIO_PLAYBACK_OFFLOAD2) {
++            if (AudioExtn::audio_devices_cmp(mAndroidOutDevices, audio_is_usb_out_device))
++                mPalOutDevice[i].config.sample_rate = config_.sample_rate;
++            else
++                mPalOutDevice[i].config.sample_rate = DEFAULT_OUTPUT_SAMPLING_RATE;
++            mPalOutDevice[i].config.bit_width = CODEC_BACKEND_DEFAULT_BIT_WIDTH;
++            mPalOutDevice[i].config.aud_fmt_id = PAL_AUDIO_FMT_PCM_S16_LE;
++        } else {
++            auto resolved_format = static_cast<uint32_t>(config_.format);
++            auto resolved_bit_width = CODEC_BACKEND_DEFAULT_BIT_WIDTH;
++            if (auto mapped_format = getAlsaSupportedFmt.find(resolved_format); mapped_format != getAlsaSupportedFmt.end()) {
++                resolved_format = mapped_format->second;
++                resolved_bit_width = format_to_bitwidth_table[resolved_format];
++            }
++            auto pal_format = PAL_AUDIO_FMT_PCM_S16_LE;
++            if (auto pal_entry = getFormatId.find(resolved_format); pal_entry != getFormatId.end()) {
++                pal_format = pal_entry->second;
++            }
++            mPalOutDevice[i].config.aud_fmt_id = pal_format;
++            mPalOutDevice[i].config.bit_width = resolved_bit_width;
+             mPalOutDevice[i].config.sample_rate = config_.sample_rate;
+-        else
+-            mPalOutDevice[i].config.sample_rate = DEFAULT_OUTPUT_SAMPLING_RATE;
+-        mPalOutDevice[i].config.bit_width = CODEC_BACKEND_DEFAULT_BIT_WIDTH;
+-        mPalOutDevice[i].config.aud_fmt_id = PAL_AUDIO_FMT_PCM_S16_LE; // TODO: need to convert this from output format
+-        AHAL_INFO("device rate = %d width = %#x fmt = %#x",
++        }
++
++        AHAL_INFO("device id = %d device rate = %d width = %#x fmt = %#x",
++            mPalOutDevice[i].id,
+             mPalOutDevice[i].config.sample_rate,
+             mPalOutDevice[i].config.bit_width,
+             mPalOutDevice[i].config.aud_fmt_id);
+@@ -3949,10 +4163,8 @@ StreamOutPrimary::StreamOutPrimary(
+ 
+         if ((AudioExtn::audio_devices_cmp(mAndroidOutDevices, AUDIO_DEVICE_OUT_SPEAKER_SAFE)) &&
+                                    (mPalOutDeviceIds[i] == PAL_DEVICE_OUT_SPEAKER)) {
+-            strlcpy(mPalOutDevice[i].custom_config.custom_key, "speaker-safe",
+-                     sizeof(mPalOutDevice[i].custom_config.custom_key));
+-            AHAL_INFO("Setting custom key as %s", mPalOutDevice[i].custom_config.custom_key);
+-        }
++                maybeSetSpeakerSafeCustomKey(&mPalOutDevice[i]);
++            }
+ 
+         if (((AudioExtn::audio_devices_cmp(mAndroidOutDevices, AUDIO_DEVICE_OUT_SPEAKER)) &&
+                                (mPalOutDeviceIds[i] == PAL_DEVICE_OUT_SPEAKER)) &&
+@@ -4013,6 +4225,7 @@ StreamOutPrimary::~StreamOutPrimary() {
+         }
+         hapticsBufSize = 0;
+     }
++    releaseHapticMixerLocked();
+ 
+     if (convertBuffer)
+         free(convertBuffer);
+diff --git a/hal/inc/AudioStream.h b/hal/inc/AudioStream.h
+index 3b0bc665d..6f7618e17 100644
+--- a/hal/inc/AudioStream.h
++++ b/hal/inc/AudioStream.h
+@@ -51,6 +51,8 @@
+ #include <map>
+ #include <unordered_map>
+ 
++struct mixer;
++
+ #define LOW_LATENCY_PLATFORM_DELAY (13*1000LL)
+ #define DEEP_BUFFER_PLATFORM_DELAY (29*1000LL)
+ #define SPATIAL_AUDIO_PLATFORM_DELAY (13*1000LL)
+@@ -592,6 +594,15 @@ protected:
+     uint8_t* hapticBuffer;
+     size_t hapticsBufSize;
+ 
++    // pdx237: tinymix Haptics Source=PCM + A2H unmute; data qua PAL (khong BE WRITEI)
++    int hapticAlsaCard_;
++    struct mixer* hapticMixer_;
++    int hapticMixerCard_;
++    bool findCs40HapticAlsaDevice(int* card, int* device);
++    void releaseHapticMixerLocked();
++    struct mixer* getHapticMixerLocked();
++    int setHapticsMixerSourcePcmLocked();
++
+     int FillHalFnPtrs();
+     friend class AudioDevice;
+ };

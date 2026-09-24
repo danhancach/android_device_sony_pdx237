@@ -1,0 +1,34 @@
+# Device-bound ROM patches (Sony / sm8550 / pdx237).
+# Dinh dang: <git-repo-relpath>|<patch-relpath-from-hub>
+# Dong bat dau # bi bo qua.
+
+# 1. system/media (FCC)
+system/media|system/media/0001-audio-fcc-limit-13-360ra.patch
+
+# 2. frameworks/av Sony port + prefer-builtin-mic
+frameworks/av|frameworks/av/0001-audioflinger-sony-port.patch
+frameworks/av|frameworks/av/0002-audiopolicy-sony-port.patch
+frameworks/av|frameworks/av/0003-media-sony-port.patch
+frameworks/av|frameworks/av/services/audiopolicy/enginedefault/src/prefer-builtin-mic-for-camcorder.patch
+
+# 3. frameworks/base (audio hardening — device)
+frameworks/base|frameworks/base/services/core/java/com/android/server/audio/disable-audio-hardening-by-property.patch
+
+# 4. hardware/qcom-caf haptic + audio + display (sm8550)
+# haptic truoc hi-res: hi-res reverse-check pass sau haptic (hunk overlap)
+hardware/qcom-caf/sm8550/audio/primary-hal|hardware/qcom-caf/sm8550/audio/primary-hal/fix-haptic-asp-pal-mixer.patch
+hardware/qcom-caf/sm8550/audio/primary-hal|hardware/qcom-caf/sm8550/audio/primary-hal/fix-haptic-audio-deep-buffer-balance.patch
+hardware/qcom-caf/sm8550/audio/primary-hal|hardware/qcom-caf/sm8550/audio/primary-hal/fix-haptic-setvolume-strip-haptic-ch.patch
+hardware/qcom-caf/sm8550/audio/primary-hal|hardware/qcom-caf/sm8550/audio/primary-hal/hal/hi-res-output-format.patch
+hardware/qcom-caf/sm8550/audio/primary-hal|hardware/qcom-caf/sm8550/audio/primary-hal/hal/adapt-to-sony-sources.patch
+hardware/qcom-caf/sm8550/audio/primary-hal|hardware/qcom-caf/sm8550/audio/primary-hal/hal/skip-speaker-safe-sony-pal.patch
+hardware/qcom-caf/sm8550/display|hardware/qcom-caf/sm8550/display/init/remove-disable-client-composition-cache.patch
+hardware/qcom-caf/sm8550/display|hardware/qcom-caf/sm8550/display/services/config/src/include-mutex.patch
+
+# 5. system/vold (exFAT Sony utils)
+system/vold|system/vold/fs/exfat-sony-utils.patch
+
+# 6. packages (Xperia battery / LineageParts charging)
+packages/apps/Settings|packages/apps/Settings/battery-monitor-settings-entry.patch
+packages/apps/Settings|packages/apps/Settings/xperia-battery-care-entry.patch
+packages/apps/LineageParts|packages/apps/LineageParts/disable-charging-control-catalog.patch

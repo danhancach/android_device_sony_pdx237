@@ -1,0 +1,32 @@
+# Ringtone/haptic L/R balance — cung co che music (0004 deep-buffer speaker balance).
+# Truoc: WITH_HAPTICS ep FAST → PAL_STREAM_LOW_LATENCY → path lech.
+# Pregain/Ring Listener chi loudness, KHONG phai balance.
+# Sau: audio stream dung DEEP_BUFFER → PAL_STREAM_DEEP_BUFFER + custom_key rong;
+# ASP haptic van mo PAL_STREAM_HAPTICS rieng (khong doi A2H/asp_enable).
+#
+# Apply: device/sony/pdx237/patchs/apply.sh
+#
+--- a/hal/AudioStream.cpp
++++ b/hal/AudioStream.cpp
+@@ -3969,16 +3969,17 @@
+         stream_.get()->create_mmap_buffer = astream_out_create_mmap_buffer;
+         stream_.get()->get_mmap_position = astream_out_get_mmap_position;
+     }
+ 
+     if (usecase_ == USECASE_AUDIO_PLAYBACK_WITH_HAPTICS) {
+         AHAL_INFO("Haptics Usecase");
+-        /* Setting flag here as no flag is being set for haptics from AudioPolicyManager
+-         * so that audio stream runs as low latency stream.
+-         */
+-        flags_ = AUDIO_OUTPUT_FLAG_FAST;
++        // Can bang L/R giong music (patch 0004): deep-buffer + custom_key rong
++        // de SonyDolby::update_device_volume_all bu dung sau DAP EQ bat doi xung.
++        // FAST/low-latency (+ speaker-safe) la path lech; khong dung pregain.
++        // ASP haptic van mo PAL_STREAM_HAPTICS rieng — chi doi stream AUDIO.
++        flags_ = AUDIO_OUTPUT_FLAG_DEEP_BUFFER;
+     }
+ 
+     mInitialized = true;
+     for(auto dev : mAndroidOutDevices)
+         audio_extn_gef_notify_device_config(dev, config_.channel_mask,
+             config_.sample_rate, flags_);

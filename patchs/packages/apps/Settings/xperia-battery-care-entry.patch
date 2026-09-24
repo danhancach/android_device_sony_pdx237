@@ -1,0 +1,52 @@
+diff --git a/res/values-vi/xperia_battery_care_strings.xml b/res/values-vi/xperia_battery_care_strings.xml
+new file mode 100644
+index 00000000000..b9beef611ec
+--- /dev/null
++++ b/res/values-vi/xperia_battery_care_strings.xml
+@@ -0,0 +1,8 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- Copyright (C) 2026 The XperiaLabs Project
++     SPDX-License-Identifier: Apache-2.0
++-->
++<resources>
++    <string name="xperia_battery_care_title">Quản lý sạc pin</string>
++    <string name="xperia_battery_care_summary">Giới hạn sạc và giảm nhiệt khi cắm sạc để kéo dài tuổi thọ pin</string>
++</resources>
+diff --git a/res/values/xperia_battery_care_strings.xml b/res/values/xperia_battery_care_strings.xml
+new file mode 100644
+index 00000000000..fe6014e4153
+--- /dev/null
++++ b/res/values/xperia_battery_care_strings.xml
+@@ -0,0 +1,9 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- Copyright (C) 2026 The XperiaLabs Project
++     SPDX-License-Identifier: Apache-2.0
++-->
++<resources>
++    <!-- Entry Settings > Battery cho XperiaCharger (thay Lineage Charging control) -->
++    <string name="xperia_battery_care_title">Charging management</string>
++    <string name="xperia_battery_care_summary">Limit charging and reduce heat while plugged in to help battery longevity</string>
++</resources>
+diff --git a/res/xml/power_usage_summary.xml b/res/xml/power_usage_summary.xml
+index 7ed9f5aba03..12b7f673e35 100644
+--- a/res/xml/power_usage_summary.xml
++++ b/res/xml/power_usage_summary.xml
+@@ -81,10 +81,15 @@
+ 
+     <com.android.settingslib.widget.UntitledPreferenceCategory
+         android:key="charging_category">
+-        <!-- Charging control -->
+-        <lineageos.preference.LineagePartsPreference
++        <!-- Battery Care (XperiaCharger) — thay Lineage charging_control -->
++        <Preference
+             android:key="charging_control"
+-            settings:requiresService="lineagehealth" />
++            android:title="@string/xperia_battery_care_title"
++            android:summary="@string/xperia_battery_care_summary">
++            <intent
++                android:targetPackage="com.xperia.settings.charger"
++                android:targetClass="com.xperia.settings.charger.ChargerSettingsActivity" />
++        </Preference>
+ 
+         <!-- Charging speed -->
+         <ListPreference

@@ -1,0 +1,13 @@
+diff --git a/services/audiopolicy/enginedefault/src/Engine.cpp b/services/audiopolicy/enginedefault/src/Engine.cpp
+index 25c223b3a4..fe8ed212fa 100644
+--- a/services/audiopolicy/enginedefault/src/Engine.cpp
++++ b/services/audiopolicy/enginedefault/src/Engine.cpp
+@@ -712,7 +712,7 @@ sp<DeviceDescriptor> Engine::getDeviceForInputSource(audio_source_t inputSource)
+     case AUDIO_SOURCE_CAMCORDER:
+         // For a device without built-in mic, adding usb device
+         device = availableDevices.getFirstExistingDevice({
+-                AUDIO_DEVICE_IN_BACK_MIC, AUDIO_DEVICE_IN_BUILTIN_MIC,
++                AUDIO_DEVICE_IN_BUILTIN_MIC, AUDIO_DEVICE_IN_BACK_MIC,
+                 AUDIO_DEVICE_IN_USB_DEVICE});
+         break;
+     case AUDIO_SOURCE_VOICE_DOWNLINK:

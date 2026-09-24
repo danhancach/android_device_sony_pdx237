@@ -1,0 +1,43 @@
+# SetVolume: bo kenh haptic khi dem channel — tranh mono+haptic bi coi stereo vol lech.
+# Doc lap can bang deep-buffer; an toan khi stack voi ASP + deep-buffer.
+#
+# Apply: device/sony/pdx237/patchs/apply.sh
+#
+--- a/hal/AudioStream.cpp
++++ b/hal/AudioStream.cpp
+@@ -2578,26 +2578,32 @@
+     /* free previously cached volume if any */
+     if (volume_) {
+         free(volume_);
+         volume_ = NULL;
+     }
+ 
+-    if (audio_channel_count_from_out_mask(config_.channel_mask) == 1) {
++    // Bo kenh haptic khi dem channel — tranh coi mono+haptic la stereo vol pair lech
++    const audio_channel_mask_t audioChMask =
++            (audio_channel_mask_t)(config_.channel_mask & ~AUDIO_CHANNEL_HAPTIC_ALL);
++    const uint32_t audioChCount = audio_channel_count_from_out_mask(
++            audioChMask != AUDIO_CHANNEL_NONE ? audioChMask : config_.channel_mask);
++
++    if (audioChCount == 1) {
+         volume_ = (struct pal_volume_data *)calloc(1, sizeof(struct pal_volume_data)
+                 +sizeof(struct pal_channel_vol_kv));
+         if (!volume_) {
+             AHAL_ERR("Failed to allocate mem for volume_");
+             ret = -ENOMEM;
+             goto done;
+         }
+         volume_->no_of_volpair = 1;
+         volume_->volume_pair[0].channel_mask = 0x03;
+ 
+-        if (config_.channel_mask == 0x1)
++        if (audioChMask == AUDIO_CHANNEL_OUT_MONO || audioChMask == 0x1)
+             volume_->volume_pair[0].vol = left;
+-        else if (config_.channel_mask == 0x2)
++        else if (audioChMask == AUDIO_CHANNEL_OUT_FRONT_RIGHT || audioChMask == 0x2)
+             volume_->volume_pair[0].vol = right;
+         else
+             volume_->volume_pair[0].vol = (left + right)/2.0;
+     } else {
+         volume_ = (struct pal_volume_data *)calloc(1, sizeof(struct pal_volume_data)
+                     +sizeof(struct pal_channel_vol_kv) * 2);

@@ -1,0 +1,109 @@
+diff --git a/res/xml/power_usage_summary.xml b/res/xml/power_usage_summary.xml
+index 7ed9f5aba03..01fd1c97df7 100644
+--- a/res/xml/power_usage_summary.xml
++++ b/res/xml/power_usage_summary.xml
+@@ -81,10 +81,27 @@
+ 
+     <com.android.settingslib.widget.UntitledPreferenceCategory
+         android:key="charging_category">
+-        <!-- Charging control -->
+-        <lineageos.preference.LineagePartsPreference
++        <!-- Battery Care (XperiaCharger) — thay Lineage charging_control -->
++        <Preference
+             android:key="charging_control"
+-            settings:requiresService="lineagehealth" />
++            android:icon="@drawable/ic_settings_battery_care"
++            android:title="@string/xperia_battery_care_title"
++            android:summary="@string/xperia_battery_care_summary">
++            <intent
++                android:targetPackage="com.xperia.settings.charger"
++                android:targetClass="com.xperia.settings.charger.ChargerSettingsActivity" />
++        </Preference>
++
++        <!-- Battery monitor (XperiaCharger) -->
++        <Preference
++            android:key="xperia_battery_monitor"
++            android:icon="@drawable/ic_settings_battery_monitor"
++            android:title="@string/xperia_battery_monitor_title"
++            android:summary="@string/xperia_battery_monitor_summary">
++            <intent
++                android:targetPackage="com.xperia.settings.charger"
++                android:targetClass="com.xperia.settings.charger.BatteryMonitorActivity" />
++        </Preference>
+ 
+         <!-- Charging speed -->
+         <ListPreference
+diff --git a/res/drawable/ic_settings_battery_care.xml b/res/drawable/ic_settings_battery_care.xml
+new file mode 100644
+index 00000000000..5f997c57be9
+--- /dev/null
++++ b/res/drawable/ic_settings_battery_care.xml
+@@ -0,0 +1,16 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!--
++  Copyright (C) 2026 XperiaLabs Project
++  SPDX-License-Identifier: Apache-2.0
++  Preference icon trong Settings Pin — tint OnSurface theo night.
++-->
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++    android:width="24dp"
++    android:height="24dp"
++    android:viewportWidth="24"
++    android:viewportHeight="24"
++    android:tint="@color/settingslib_materialColorOnSurface">
++    <path
++        android:fillColor="@android:color/white"
++        android:pathData="M16.7,4H15V2H9v2H7.3C6.6,4 6,4.6 6,5.3v15.3C6,21.4 6.6,22 7.3,22h9.3c0.7,0 1.3,-0.6 1.3,-1.3V5.3C18,4.6 17.4,4 16.7,4zM10.4,17.6c-0.3,0 -0.7,-0.1 -1,-0.1c-0.3,-0.1 -0.4,-0.4 -0.4,-0.6c0,-0.1 0.1,-0.3 0.3,-0.3c2,-0.8 3,-3.1 2.2,-5c-0.4,-1 -1.2,-1.8 -2.2,-2.2C9.1,9.2 9,8.9 9.2,8.7C9.3,8.6 9.4,8.5 9.5,8.5c0.5,-0.1 1.1,-0.1 1.6,-0.1c2.5,0.3 4.3,2.6 3.9,5.1C14.6,15.9 12.7,17.6 10.4,17.6z" />
++</vector>
+diff --git a/res/drawable/ic_settings_battery_monitor.xml b/res/drawable/ic_settings_battery_monitor.xml
+new file mode 100644
+index 00000000000..897fdc830ee
+--- /dev/null
++++ b/res/drawable/ic_settings_battery_monitor.xml
+@@ -0,0 +1,16 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!--
++  Copyright (C) 2026 XperiaLabs Project
++  SPDX-License-Identifier: Apache-2.0
++  Preference icon trong Settings Pin — tint OnSurface theo night.
++-->
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++    android:width="24dp"
++    android:height="24dp"
++    android:viewportWidth="24"
++    android:viewportHeight="24"
++    android:tint="@color/settingslib_materialColorOnSurface">
++    <path
++        android:fillColor="@android:color/white"
++        android:pathData="M15,4H9V2h6V4zM16.67,4H15v2H9V4H7.33C6.6,4 6,4.6 6,5.33v15.33C6,21.4 6.6,22 7.33,22h9.33C17.4,22 18,21.4 18,20.67V5.33C18,4.6 17.4,4 16.67,4zM8,17v-2h2v2H8zM11,17v-4h2v4H11zM14,17v-6h2v6H14z" />
++</vector>
+diff --git a/res/values/xperia_battery_care_strings.xml b/res/values/xperia_battery_care_strings.xml
+new file mode 100644
+index 00000000000..4f497d3d6de
+--- /dev/null
++++ b/res/values/xperia_battery_care_strings.xml
+@@ -0,0 +1,11 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!--
++  Copyright (C) 2026 XperiaLabs Project
++  SPDX-License-Identifier: Apache-2.0
++-->
++<resources>
++    <string name="xperia_battery_care_title">Charging management</string>
++    <string name="xperia_battery_care_summary">Limit charging and reduce heat while plugged in to help battery longevity</string>
++    <string name="xperia_battery_monitor_title">Battery monitor</string>
++    <string name="xperia_battery_monitor_summary">Live battery stats and usage since reset</string>
++</resources>
+diff --git a/res/values-vi/xperia_battery_care_strings.xml b/res/values-vi/xperia_battery_care_strings.xml
+new file mode 100644
+index 00000000000..8e937134403
+--- /dev/null
++++ b/res/values-vi/xperia_battery_care_strings.xml
+@@ -0,0 +1,7 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <string name="xperia_battery_care_title">Quản lý sạc pin</string>
++    <string name="xperia_battery_care_summary">Giới hạn sạc và giảm nhiệt khi cắm sạc để kéo dài tuổi thọ pin</string>
++    <string name="xperia_battery_monitor_title">Giám sát pin</string>
++    <string name="xperia_battery_monitor_summary">Thông số pin realtime và thống kê từ lúc đặt lại</string>
++</resources>

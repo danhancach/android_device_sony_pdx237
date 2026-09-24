@@ -1,0 +1,49 @@
+diff --git a/hal/AudioStream.cpp b/hal/AudioStream.cpp
+index 79c53329f..deb6c8db4 100644
+--- a/hal/AudioStream.cpp
++++ b/hal/AudioStream.cpp
+@@ -76,6 +76,20 @@ static bool is_pcm_format(audio_format_t format)
+     return false;
+ }
+ 
++static bool ahalSkipSpeakerSafeCustomKey() {
++    return property_get_bool("vendor.audio.hal.skip_speaker_safe_custom_key", false);
++}
++
++static void maybeSetSpeakerSafeCustomKey(pal_device *device) {
++    if (!ahalSkipSpeakerSafeCustomKey()) {
++        strlcpy(device->custom_config.custom_key, "speaker-safe",
++                sizeof(device->custom_config.custom_key));
++        AHAL_INFO("Setting custom key as %s", device->custom_config.custom_key);
++        return;
++    }
++    AHAL_INFO("Skipping speaker-safe custom_key; Sony PAL manages it");
++}
++
+ static int get_hdr_mode() {
+     std::shared_ptr<AudioDevice> adevice = AudioDevice::GetInstance();
+     if (property_get_bool("vendor.audio.hdr.spf.record.enable", false)) {
+@@ -2436,9 +2450,7 @@ int StreamOutPrimary::RouteStream(const std::set<audio_devices_t>& new_devices,
+ 
+             if ((AudioExtn::audio_devices_cmp(mAndroidOutDevices, AUDIO_DEVICE_OUT_SPEAKER_SAFE)) &&
+                                    (mPalOutDeviceIds[i] == PAL_DEVICE_OUT_SPEAKER)) {
+-                strlcpy(mPalOutDevice[i].custom_config.custom_key, "speaker-safe",
+-                        sizeof(mPalOutDevice[i].custom_config.custom_key));
+-                AHAL_INFO("Setting custom key as %s", mPalOutDevice[i].custom_config.custom_key);
++                maybeSetSpeakerSafeCustomKey(&mPalOutDevice[i]);
+             }
+ 
+             if (((AudioExtn::audio_devices_cmp(mAndroidOutDevices, AUDIO_DEVICE_OUT_SPEAKER)) &&
+@@ -3969,10 +3981,8 @@ StreamOutPrimary::StreamOutPrimary(
+ 
+         if ((AudioExtn::audio_devices_cmp(mAndroidOutDevices, AUDIO_DEVICE_OUT_SPEAKER_SAFE)) &&
+                                    (mPalOutDeviceIds[i] == PAL_DEVICE_OUT_SPEAKER)) {
+-            strlcpy(mPalOutDevice[i].custom_config.custom_key, "speaker-safe",
+-                     sizeof(mPalOutDevice[i].custom_config.custom_key));
+-            AHAL_INFO("Setting custom key as %s", mPalOutDevice[i].custom_config.custom_key);
+-        }
++                maybeSetSpeakerSafeCustomKey(&mPalOutDevice[i]);
++            }
+ 
+         if (((AudioExtn::audio_devices_cmp(mAndroidOutDevices, AUDIO_DEVICE_OUT_SPEAKER)) &&
+                                (mPalOutDeviceIds[i] == PAL_DEVICE_OUT_SPEAKER)) &&

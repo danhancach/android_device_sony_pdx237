@@ -1,0 +1,26 @@
+diff --git a/fs/Exfat.cpp b/fs/Exfat.cpp
+index 6444178..290fa55 100644
+--- a/fs/Exfat.cpp
++++ b/fs/Exfat.cpp
+@@ -30,8 +30,9 @@ namespace android {
+ namespace vold {
+ namespace exfat {
+ 
+-static const char* kMkfsPath = "/system/bin/mkfs.exfat";
+-static const char* kFsckPath = "/system/bin/fsck.exfat";
++// Stock Sony exfatprogs: fsck nhanh hon AOSP, tranh timeout 45s tren SD lon.
++static const char* kMkfsPath = "/system/bin/mkfs.exfat.sony";
++static const char* kFsckPath = "/system/bin/fsck.exfat.sony";
+ 
+ bool IsSupported() {
+     return access(kMkfsPath, X_OK) == 0 && access(kFsckPath, X_OK) == 0 &&
+@@ -101,7 +102,8 @@ status_t Mount(const std::string& source, const std::string& target, int ownerUi
+ status_t Format(const std::string& source) {
+     std::vector<std::string> cmd;
+     cmd.push_back(kMkfsPath);
+-    cmd.push_back("-n");
++    // Stock: -L label (khong co -n)
++    cmd.push_back("-L");
+     cmd.push_back("External");
+     cmd.push_back(source);
+ 
