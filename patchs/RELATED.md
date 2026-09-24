@@ -8,7 +8,7 @@ Hub này chỉ áp rom tree **device-bound** qua `apply.sh`. Stack ringtone / ha
 |---------|------|----------------|-----------------|
 | fw/av Sony port (dlb_ring + ringtone no DAP on haptic) | *hub này* | `frameworks/av/0001`–`0003` | tip hub: `git -C device/sony/pdx237 log -1 --oneline -- patchs` |
 | CAF HAL haptic ASP / deep buffer / setVolume | *hub này* | `hardware/qcom-caf/.../fix-haptic-*.patch` | cùng tip hub |
-| device: Dolby DAP + Pixel ringtone CS40 | [`device/sony/sm8550-common`](https://github.com/danhancach/android_device_sony_sm8550-common) (`evox`) | dlb_ring_listener + Pixel CS40 ASP path | `315d9dd` |
+| device: Dolby DAP + Pixel ringtone CS40 | [`device/sony/sm8550-common`](https://github.com/danhancach/android_device_sony_sm8550-common) (`evox`) | DVL music-only (stock); Pixel CS40 ASP path | `a7cc96c` |
 | vendor blobs: CAF HAL + pal | [`vendor/sony/sm8550-common`](https://github.com/danhancach/proprietary_vendor_sony_sm8550-common) (`evox`) | prefer CAF audio HAL and pal-impl | xem tip `evox` |
 | vendor blobs: Cirrus DVS keep haptic | cùng repo | keep haptic / speaker-safe tip audio path | xem tip `evox` |
 | vibrator HAL MI2S | [`hardware/sony`](https://github.com/danhancach/hardware_sony) (`evox`) | share MI2S; LIGHT haptic | xem tip `evox` |
