@@ -12,6 +12,10 @@ TARGET_SUPPORTS_SOUND_ENHANCEMENT_ADDON := false
 TARGET_SUPPORTS_SOUND_ENHANCEMENT_DTS := false
 TARGET_SHIPS_SOUND_ENHANCEMENT := false
 
+# Evolution userdebug sets PRODUCT_NOT_DEBUGGABLE_IN_USERDEBUG → ro.debuggable=0,
+# adb root/remount không hoạt động. Bật để dev push system_ext (m XperiaDisplay).
+WITH_ADB_INSECURE := true
+
 # Inherit sm8550-common
 $(call inherit-product, device/sony/sm8550-common/common.mk)
 
