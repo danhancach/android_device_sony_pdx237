@@ -53,7 +53,9 @@ PRODUCT_SOONG_NAMESPACES += \
 
 # Remove unwanted AOSP/GMS/Sony packages (see RemovePackages/Android.mk)
 PRODUCT_PACKAGES += \
-    RemovePackages
+    RemovePackages \
+    disable_audio_hardening.sh \
+    init.pdx237.rc
 
 # Sony extras
 TARGET_SHIPS_SONY_FRAMEWORK := true

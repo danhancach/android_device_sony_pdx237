@@ -1,1 +1,5 @@
 ro.product.marketname=Xperia 5V
+
+# A17 background audio hardening mutes merchant apps (Coupang/Baemin USAGE_MEDIA).
+# Must be on product (not vendor): AudioService reads ro.config.* via system namespace.
+ro.config.disable_audio_hardening=true
