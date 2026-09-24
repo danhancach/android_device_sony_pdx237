@@ -1,38 +1,31 @@
 #
 # Copyright (C) 2018 The LineageOS Project
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
 #
 
-#
-# This file sets variables that control the way modules are built
-# thorughout the system. It should not be used to conditionally
-# disable makefiles (the proper mechanism to control what gets
-# included in a build is to use PRODUCT_PACKAGES in a product
-# definition file).
-#
+# Feature flags (set before inheriting common — common.mk may override defaults)
+# SomcCameraApp-Chikugo does not work on pdx237; keep Pro camera extras.
+TARGET_SHIPS_SONY_CAMERA_APP := false
+TARGET_SUPPORTS_360RA := false
+TARGET_SUPPORTS_SOUND_ENHANCEMENT_ADDON := false
+TARGET_SUPPORTS_SOUND_ENHANCEMENT_DTS := false
+TARGET_SHIPS_SOUND_ENHANCEMENT := false
 
-# Inherit from sony sm8550-common
+# Inherit sm8550-common
 $(call inherit-product, device/sony/sm8550-common/common.mk)
 
-# Boot animation
+# Overrides after common.mk
+TARGET_SUPPORTS_SOUND_ENHANCEMENT_ADDON := false
+AUDIO_FEATURE_ENABLED_LSM_HIDL := false
+
+# Display
 TARGET_SCREEN_HEIGHT := 2520
 TARGET_SCREEN_WIDTH := 1080
-
-# Device uses high-density artwork where available
 PRODUCT_AAPT_CONFIG := normal
 PRODUCT_AAPT_PREF_CONFIG := xxhdpi
 
+# HIDL base (device-specific)
 PRODUCT_PACKAGES += \
     android.hidl.base@1.0 \
     android.hidl.manager@1.0
@@ -41,17 +34,29 @@ PRODUCT_PACKAGES += \
 PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/nfc/libnfc-nxp-typef.conf:$(TARGET_COPY_OUT_VENDOR)/etc/libnfc-nxp-typef.conf
 
-# Overlays
+# Overlays (RRO)
 PRODUCT_PACKAGES += \
-    SonyPDX237SystemUIRes \
-    SonyPDX237NfcNciRes
+    ApertureResTarget \
+    EvolutionSettingsResTarget \
+    SonyPDX237NfcNciRes \
+    SonyPDX237SystemUIRes
 
 DEVICE_PACKAGE_OVERLAYS += \
-    $(LOCAL_PATH)/overlay-lineage
+    $(LOCAL_PATH)/overlay-evolution
 
-# Soong namespaces
 PRODUCT_SOONG_NAMESPACES += \
     $(LOCAL_PATH)
 
-# Inherit from vendor blobs
+# Sony extras
+TARGET_SHIPS_SONY_FRAMEWORK := true
+TARGET_SHIPS_SONY_CAMERA := true
+TARGET_SUPPORTS_GAME_CONTROLLERS := true
+TARGET_SUPPORTS_XPERIA_STREAM := true
+TARGET_SHIPS_XPERIA_LWP_SELECTED := true
+TARGET_XPERIA_LWP_VERSION := LWP-5V
+
+$(call inherit-product, vendor/sony/extra/Common/apps/apps.mk)
+$(call inherit-product, vendor/sony/extra/Yodo/extra.mk)
+
+# Vendor blobs
 $(call inherit-product, vendor/sony/pdx237/pdx237-vendor.mk)
