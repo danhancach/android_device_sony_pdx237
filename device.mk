@@ -7,7 +7,7 @@
 # Feature flags (set before inheriting common — common.mk may override defaults)
 # SomcCameraApp-Chikugo does not work on pdx237; keep Pro camera extras.
 TARGET_SHIPS_SONY_CAMERA_APP := false
-TARGET_SUPPORTS_360RA := false
+TARGET_SUPPORTS_360RA := true
 TARGET_SUPPORTS_SOUND_ENHANCEMENT_ADDON := false
 TARGET_SUPPORTS_SOUND_ENHANCEMENT_DTS := false
 TARGET_SHIPS_SOUND_ENHANCEMENT := false
@@ -68,6 +68,24 @@ $(call inherit-product, vendor/sony/extra/Yodo/extra.mk)
 
 # Vendor blobs
 $(call inherit-product, vendor/sony/pdx237/pdx237-vendor.mk)
+
+# Strip Sony Yodo Dolby stack (use vendor/sony/audio stock A15 port instead)
+PRODUCT_PACKAGES := $(filter-out \
+    DolbySound \
+    SoundEnhancementPDX237 \
+    XperiaAudioAddon \
+    XperiaAudioDTS \
+    XperiaAudioPlus \
+    XperiaAudioPlusOverlay \
+    XperiaTSRA \
+    vendor.dolby.hardware.dms@2.0-service \
+    vendor.dolby.hardware.dms@2.0-impl \
+    vendor.dolby.hardware.dms@2.0_prebuilt \
+    vendor.dolby.hardware.dms.xml \
+    vendor.dolby.media.c2@1.0-service.xml,$(PRODUCT_PACKAGES))
+
+# Sony stock A15 audio (Dolby via vendor/sony/audio)
+$(call inherit-product, vendor/sony/audio/config.mk)
 
 # KT VoLTE (imported device + Korea SIM)
 $(call inherit-product, device/sony/pdx237/volte-kt.mk)

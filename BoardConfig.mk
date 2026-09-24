@@ -11,6 +11,11 @@ DEVICE_PATH := device/sony/pdx237
 # Audio
 AUDIO_FEATURE_ENABLED_LSM_HIDL := false
 
+# Sony stock libbundlewrapper (360RA) shares install path with AOSP libbundlewrapper.
+BUILD_BROKEN_DUP_RULES := true
+# A17 blocks ELF in PRODUCT_COPY_FILES; 360RA Sony blobs still use COPY_FILES + dup rules.
+BUILD_BROKEN_ELF_PREBUILT_PRODUCT_COPY_FILES := true
+
 # Display
 TARGET_SCREEN_DENSITY := 420
 
