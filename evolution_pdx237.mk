@@ -13,6 +13,7 @@ $(call inherit-product, $(LOCAL_PATH)/device.mk)
 WITH_GMS := true
 $(call inherit-product, vendor/lineage/config/common_mobile_full.mk)
 $(call inherit-product, vendor/lineage/config/telephony.mk)
+$(call inherit-product, $(LOCAL_PATH)/gms.mk)
 
 # Evolution features
 EVO_BUILD_TYPE := Unofficial
