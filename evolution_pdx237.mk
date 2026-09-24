@@ -12,6 +12,8 @@ $(call inherit-product, $(LOCAL_PATH)/device.mk)
 # Evolution / Lineage
 WITH_GMS := true
 # Jelly / SystemUIClocks-Flex: go bang RemovePackages (khong dung TARGET_INCLUDE_* — flag chet)
+# Stock XQ-DE72 identity, platform ver 17 (khong mustang, khong FP userdebug tu nhien)
+TARGET_ENABLE_FP_OVERRIDE := false
 $(call inherit-product, vendor/lineage/config/common_mobile_full.mk)
 $(call inherit-product, vendor/lineage/config/telephony.mk)
 $(call inherit-product, $(LOCAL_PATH)/gms.mk)
@@ -34,10 +36,20 @@ PRODUCT_BRAND := Sony
 PRODUCT_MODEL := Xperia 5 V
 PRODUCT_GMS_CLIENTID_BASE := android-sonymobile
 
+# ro.system.build.fingerprint uses PRODUCT_SYSTEM_* (not BuildFingerprint override)
+PRODUCT_SYSTEM_BRAND := Sony
+PRODUCT_SYSTEM_NAME := XQ-DE72
+PRODUCT_SYSTEM_DEVICE := XQ-DE72
+PRODUCT_SYSTEM_MODEL := XQ-DE72
+PRODUCT_SYSTEM_MANUFACTURER := Sony
+
+# Full stock FP — PRODUCT_SYSTEM_* alone still leaves platform id/incremental/tags
+PRODUCT_SYSTEM_PROPERTIES += \
+    ro.system.build.fingerprint=Sony/XQ-DE72/XQ-DE72:17/67.2.A.3.178/067002A003017800523109309:user/release-keys
+
+# ProductModel=Pdx237 cho Dolby. FP stock user/release-keys ver 17: app nhan A17,
+# tranh lo userdebug. Build tags: vendor/evolution-priv/keys via evolution.mk keys.mk
 PRODUCT_BUILD_PROP_OVERRIDES += \
-    BuildDesc="XQ-DE72-user 15 67.2.A.3.178 067002A003017800523109309 release-keys" \
-    BuildFingerprint=Sony/XQ-DE72/XQ-DE72:15/67.2.A.3.178/067002A003017800523109309:user/release-keys \
-    DeviceName=XQ-DE72 \
-    DeviceProduct=XQ-DE72 \
-    SystemDevice=XQ-DE72 \
-    SystemName=XQ-DE72
+    BuildDesc="XQ-DE72-user 17 67.2.A.3.178 067002A003017800523109309 release-keys" \
+    BuildFingerprint=Sony/XQ-DE72/XQ-DE72:17/67.2.A.3.178/067002A003017800523109309:user/release-keys \
+    ProductModel=Pdx237
