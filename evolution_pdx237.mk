@@ -11,6 +11,7 @@ $(call inherit-product, $(LOCAL_PATH)/device.mk)
 
 # Evolution / Lineage
 WITH_GMS := true
+# Jelly / SystemUIClocks-Flex: go bang RemovePackages (khong dung TARGET_INCLUDE_* — flag chet)
 $(call inherit-product, vendor/lineage/config/common_mobile_full.mk)
 $(call inherit-product, vendor/lineage/config/telephony.mk)
 $(call inherit-product, $(LOCAL_PATH)/gms.mk)
