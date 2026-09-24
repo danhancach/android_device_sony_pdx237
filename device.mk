@@ -64,3 +64,6 @@ $(call inherit-product, vendor/sony/extra/Yodo/extra.mk)
 
 # Vendor blobs
 $(call inherit-product, vendor/sony/pdx237/pdx237-vendor.mk)
+
+# KT VoLTE (imported device + Korea SIM)
+$(call inherit-product, device/sony/pdx237/volte-kt.mk)
