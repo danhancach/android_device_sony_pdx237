@@ -89,3 +89,15 @@ $(call inherit-product, vendor/sony/audio/config.mk)
 
 # KT VoLTE (imported device + Korea SIM)
 $(call inherit-product, device/sony/pdx237/volte-kt.mk)
+
+# Play Integrity defaults (used when Settings.Secure spoof config is empty after flash)
+# Ship on product + vendor: vendor survives partial OTA/push; vendor path is secondary fallback in framework.
+PRODUCT_COPY_FILES += \
+    $(LOCAL_PATH)/prebuilt/evolution/pif.json:$(TARGET_COPY_OUT_PRODUCT)/etc/evolution/pif.json \
+    $(LOCAL_PATH)/prebuilt/evolution/keybox.xml:$(TARGET_COPY_OUT_PRODUCT)/etc/evolution/keybox.xml \
+    $(LOCAL_PATH)/prebuilt/evolution/trickystore_targets.txt:$(TARGET_COPY_OUT_PRODUCT)/etc/evolution/trickystore_targets.txt \
+    $(LOCAL_PATH)/prebuilt/evolution/trickystore_patch.txt:$(TARGET_COPY_OUT_PRODUCT)/etc/evolution/trickystore_patch.txt \
+    $(LOCAL_PATH)/prebuilt/evolution/pif.json:$(TARGET_COPY_OUT_VENDOR)/etc/evolution/pif.json \
+    $(LOCAL_PATH)/prebuilt/evolution/keybox.xml:$(TARGET_COPY_OUT_VENDOR)/etc/evolution/keybox.xml \
+    $(LOCAL_PATH)/prebuilt/evolution/trickystore_targets.txt:$(TARGET_COPY_OUT_VENDOR)/etc/evolution/trickystore_targets.txt \
+    $(LOCAL_PATH)/prebuilt/evolution/trickystore_patch.txt:$(TARGET_COPY_OUT_VENDOR)/etc/evolution/trickystore_patch.txt
