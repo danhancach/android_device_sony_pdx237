@@ -51,6 +51,10 @@ DEVICE_PACKAGE_OVERLAYS += \
 PRODUCT_SOONG_NAMESPACES += \
     $(LOCAL_PATH)
 
+# Remove unwanted AOSP/GMS/Sony packages (see RemovePackages/Android.mk)
+PRODUCT_PACKAGES += \
+    RemovePackages
+
 # Sony extras
 TARGET_SHIPS_SONY_FRAMEWORK := true
 TARGET_SHIPS_SONY_CAMERA := true
