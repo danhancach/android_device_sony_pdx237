@@ -1,0 +1,11 @@
+# pdx237: disable A17 background audio hardening after boot (merchant notification audio).
+
+on property:sys.boot_completed=1
+    start disable-audio-hardening
+
+service disable-audio-hardening /system/bin/disable_audio_hardening.sh
+    class late_start
+    user shell
+    group shell audio
+    oneshot
+    disabled

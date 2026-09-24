@@ -1,0 +1,16 @@
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+
+prebuilt_etc {
+    name: "init.pdx237.rc",
+    src: "init.pdx237.rc",
+    sub_dir: "init",
+    device_specific: true,
+}
+
+sh_binary {
+    name: "disable_audio_hardening.sh",
+    src: "bin/disable_audio_hardening.sh",
+    device_specific: true,
+}
