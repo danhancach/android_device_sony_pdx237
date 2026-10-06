@@ -44,12 +44,13 @@ PRODUCT_SYSTEM_MODEL := XQ-DE72
 PRODUCT_SYSTEM_MANUFACTURER := Sony
 
 # Full stock FP — PRODUCT_SYSTEM_* alone still leaves platform id/incremental/tags
+# Incremental tu stock getprop 67.2.A.3.194; API level van spoof 17 (ROM A17)
 PRODUCT_SYSTEM_PROPERTIES += \
-    ro.system.build.fingerprint=Sony/XQ-DE72/XQ-DE72:17/67.2.A.3.178/067002A003017800523109309:user/release-keys
+    ro.system.build.fingerprint=Sony/XQ-DE72/XQ-DE72:17/67.2.A.3.194/067002A003019400523109309:user/release-keys
 
 # ProductModel=Pdx237 cho Dolby. FP stock user/release-keys ver 17: app nhan A17,
 # tranh lo userdebug. Build tags: vendor/evolution-priv/keys via evolution.mk keys.mk
 PRODUCT_BUILD_PROP_OVERRIDES += \
-    BuildDesc="XQ-DE72-user 17 67.2.A.3.178 067002A003017800523109309 release-keys" \
-    BuildFingerprint=Sony/XQ-DE72/XQ-DE72:17/67.2.A.3.178/067002A003017800523109309:user/release-keys \
+    BuildDesc="XQ-DE72-user 17 67.2.A.3.194 067002A003019400523109309 release-keys" \
+    BuildFingerprint=Sony/XQ-DE72/XQ-DE72:17/67.2.A.3.194/067002A003019400523109309:user/release-keys \
     ProductModel=Pdx237
