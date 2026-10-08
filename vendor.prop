@@ -8,9 +8,7 @@ persist.vendor.fingerprint.sensor_location=1080|1150|240|local:131
 # Chikugo camera: privileged client bypass for stream dimension validation
 persist.vendor.camera.privapp.list=com.sonymobile.photopro,jp.co.sony.mc.cameraapp
 
-# Smooth display — timer ngan nhu Samsung (SM-G991N); touchControl cooldown trong SF
+# Smooth display — timer ngan nhu Samsung (SM-G991N)
 ro.surface_flinger.set_idle_timer_ms=600
 ro.surface_flinger.set_touch_timer_ms=300
-# 350ms: dong bo post-coast peak hold (kPostCoastHoldNs); fling dai dua Cat::High
-ro.surface_flinger.set_touch_control_timer_ms=350
 ro.surface_flinger.set_display_power_timer_ms=1000
