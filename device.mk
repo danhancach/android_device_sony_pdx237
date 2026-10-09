@@ -46,6 +46,7 @@ PRODUCT_PACKAGES += \
     SonyPDX237SystemUIRes
 
 DEVICE_PACKAGE_OVERLAYS += \
+    $(LOCAL_PATH)/overlay-frameworks \
     $(LOCAL_PATH)/overlay-evolution
 
 PRODUCT_SOONG_NAMESPACES += \
