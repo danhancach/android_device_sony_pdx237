@@ -2,6 +2,10 @@
 # Video ExactOrMultiple: TikTok/Douyin/FB built-in. Them: arr_video_match_pkgs=pkg[,...]
 persist.sys.arr_video_match=1
 # Idle settle: Cat::High -> Normal khi !touch (hold_ms mac dinh 1000).
-# pkgs = chuoi khop layer name (nmap; StatusBar = Dynamic Bar VRI-StatusBar).
+# Chi latch hold cho app trong list; StatusBar/NotificationShade chrome khong latch
+# (xem SF RefreshRateSelector). pkgs = chuoi khop layer name:
+#   nmap — Naver Map scroll peak
+#   StatusBar — Dynamic Bar VRI-StatusBar
+#   baeminorder — OrderDetail mid-scroll High -> nhay/ket 60/120 khi DB Normal
 persist.sys.arr_pkg_settle=1
-persist.sys.arr_pkg_settle_pkgs=com.nhn.android.nmap,StatusBar
+persist.sys.arr_pkg_settle_pkgs=com.nhn.android.nmap,StatusBar,com.woowahan.baeminorder
