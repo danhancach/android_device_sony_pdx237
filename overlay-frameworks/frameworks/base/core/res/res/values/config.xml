@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     Merchant order apps: chuong don qua MediaPlayer in-process (channel sound=null).
+     Freezer exemption: tranh SIGSTOP khi cached (khong giu process song).
+     Van co the chet sau FCM cold-start (~0.3s) neu khong FGS — am bao chi phat khi mo app.
+-->
+<resources>
+    <string-array name="config_defaultCachedAppFreezerExemptionPkgs" translatable="false">
+        <item>com.woowahan.baeminorder</item>
+        <item>com.woowahan.bros</item>
+        <item>com.coupang.mobile.eats.merchant</item>
+    </string-array>
+</resources>
