@@ -75,6 +75,7 @@ $(call inherit-product, vendor/sony/pdx237/pdx237-vendor.mk)
 # Strip Sony Yodo Dolby stack (use vendor/sony/audio stock A15 port instead)
 PRODUCT_PACKAGES := $(filter-out \
     DolbySound \
+    ThreeSixtyRASettings \
     SoundEnhancementPDX237 \
     XperiaAudioAddon \
     XperiaAudioDTS \
