@@ -1,0 +1,58 @@
+From 160f09c6272d7f903ba9e8c54138a161a5da0f56 Mon Sep 17 00:00:00 2001
+From: danhancach <111163507+danhancach@users.noreply.github.com>
+Date: Mon, 26 Oct 2026 14:54:57 +0900
+Subject: [PATCH] audioflinger: preserve explicit Dolby state on DMS reconnect
+
+---
+ services/audioflinger/EffectDapController.cpp | 15 ++++++++++++++-
+ services/audioflinger/EffectDapController.h   |  1 +
+ 2 files changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/services/audioflinger/EffectDapController.cpp b/services/audioflinger/EffectDapController.cpp
+index e17173eb07..dd936e086d 100644
+--- a/services/audioflinger/EffectDapController.cpp
++++ b/services/audioflinger/EffectDapController.cpp
+@@ -116,7 +116,19 @@ EffectDapController::EffectDapController() {
+                 applyDapParamUpdate_l(params);
+             },
+             [this](bool dolbyOn) {
+-                updateBypassFromDolbyHalState(dolbyOn);
++                {
++                    Mutex::Autolock _l(mLock);
++                    // DMS reports effective processing, which may be OFF while
++                    // DSEE owns the DIRECT route. It is only a startup fallback;
++                    // never overwrite the user's explicit HAL Dolby state when
++                    // the global effect reconnects to a mixer.
++                    if (mDolbyHalStateKnown) {
++                        return;
++                    }
++                    mDolbyHalOn = dolbyOn;
++                    updateBypassFromProperty_l();
++                }
++                runAfterRoutingUpdate();
+             });
+ }
+ 
+@@ -665,6 +677,7 @@ void EffectDapController::updateBypassFromDolbyHalState(bool dolbyOn) {
+     {
+         Mutex::Autolock _l(mLock);
+         const bool halChanged = (mDolbyHalOn != dolbyOn);
++        mDolbyHalStateKnown = true;
+         mDolbyHalOn = dolbyOn;
+         if (halChanged) {
+             ALOGI("%s() hal dolby=%d", __func__, dolbyOn ? 1 : 0);
+diff --git a/services/audioflinger/EffectDapController.h b/services/audioflinger/EffectDapController.h
+index fec36e0f32..07426b3a78 100644
+--- a/services/audioflinger/EffectDapController.h
++++ b/services/audioflinger/EffectDapController.h
+@@ -105,6 +105,7 @@ private:
+     mutable Mutex mLock;
+     bool mBypassed = true;
+     bool mDolbyHalOn = false;
++    bool mDolbyHalStateKnown = false;
+     bool mDseeHalOn = false;
+     bool mEffectiveDolbyRoute = false;
+     bool mEffectiveDseeRoute = false;
+-- 
+2.53.0
+

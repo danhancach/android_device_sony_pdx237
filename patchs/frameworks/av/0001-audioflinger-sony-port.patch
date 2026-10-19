@@ -1,29 +1,29 @@
-From 2d6e26c25a5c5e580bc1031872bd1fbe4b4176b6 Mon Sep 17 00:00:00 2001
+From aa750a189615363999aa4888e81f08fe29d2908f Mon Sep 17 00:00:00 2001
 From: danhancach <111163507+danhancach@users.noreply.github.com>
-Date: Tue, 13 Oct 2026 15:09:01 +0900
+Date: Mon, 26 Oct 2026 14:53:48 +0900
 Subject: [PATCH] audioflinger: Sony/Dolby port
 
 ---
  services/audioflinger/Android.bp              |   7 +
  services/audioflinger/AudioFlinger.cpp        | 248 +++++-
  services/audioflinger/AudioFlinger.h          |   7 +
- services/audioflinger/EffectDapController.cpp | 793 ++++++++++++++++++
+ services/audioflinger/EffectDapController.cpp | 800 ++++++++++++++++++
  services/audioflinger/EffectDapController.h   | 119 +++
  services/audioflinger/EffectDapDmsClient.cpp  | 191 +++++
  services/audioflinger/EffectDapDmsClient.h    |  49 ++
- services/audioflinger/Effects.cpp             |  88 ++
- services/audioflinger/Effects.h               |  13 +
+ services/audioflinger/Effects.cpp             | 199 ++++-
+ services/audioflinger/Effects.h               |  24 +
  services/audioflinger/IAfEffect.h             |   3 +
  services/audioflinger/IAfThread.h             |   6 +-
  .../audioflinger/SonyEffectPriorityApps.cpp   | 123 +++
  .../audioflinger/SonyEffectPriorityApps.h     |  12 +
- .../audioflinger/SonyRoutingInvalidate.cpp    | 140 ++++
+ .../audioflinger/SonyRoutingInvalidate.cpp    | 140 +++
  services/audioflinger/SonyRoutingInvalidate.h |  16 +
  services/audioflinger/Threads.cpp             | 106 +++
  services/audioflinger/Threads.h               |  11 +-
  services/audioflinger/dolby_debug.h           |  17 +
  services/audioflinger/ds_config.h             |  17 +
- 19 files changed, 1962 insertions(+), 4 deletions(-)
+ 19 files changed, 2090 insertions(+), 5 deletions(-)
  create mode 100644 services/audioflinger/EffectDapController.cpp
  create mode 100644 services/audioflinger/EffectDapController.h
  create mode 100644 services/audioflinger/EffectDapDmsClient.cpp
@@ -68,7 +68,7 @@ index 5dd33e56ee..8008e4f1c2 100644
          "MelReporter.cpp",
          "PatchCommandThread.cpp",
 diff --git a/services/audioflinger/AudioFlinger.cpp b/services/audioflinger/AudioFlinger.cpp
-index a3a893bd61..51d8b4135f 100644
+index a3a893bd61..5f80e20fd8 100644
 --- a/services/audioflinger/AudioFlinger.cpp
 +++ b/services/audioflinger/AudioFlinger.cpp
 @@ -25,6 +25,9 @@
@@ -110,7 +110,7 @@ index a3a893bd61..51d8b4135f 100644
      while (!mRecordThreads.empty()) {
          // closeInput_nonvirtual() will remove specified entry from mRecordThreads
          closeInput_nonvirtual(mRecordThreads.begin()->first);
-@@ -1745,6 +1756,103 @@ IAfRecordThread* AudioFlinger::getRecordThreadForDevice_l(audio_devices_t device
+@@ -1745,6 +1756,108 @@ IAfRecordThread* AudioFlinger::getRecordThreadForDevice_l(audio_devices_t device
      return (it != mRecordThreads.end()) ? it->second.get() : nullptr;
  }
  
@@ -150,6 +150,11 @@ index a3a893bd61..51d8b4135f 100644
 +    }
 +    if (strstr(keyValuePairs, "dsee_hx_state=1") != nullptr) {
 +        return property_get_int32("vendor.audio.invalidate_sleep_dsee_on", 50000);
++    }
++    if (strstr(keyValuePairs, "dsee_hx_state=0") != nullptr) {
++        // DIRECT -> mixer teardown is the transition most likely to expose a
++        // stale buffer. Let the old route drain before invalidating tracks.
++        return property_get_int32("vendor.audio.invalidate_sleep_dsee_off", 120000);
 +    }
 +    return property_get_int32("vendor.audio.invalidate_sleep_before", 100000);
 +}
@@ -214,7 +219,7 @@ index a3a893bd61..51d8b4135f 100644
  // Filter reserved keys from setParameters() before forwarding to audio HAL or acting upon.
  // Some keys are used for audio routing and audio path configuration and should be reserved for use
  // by audio policy and audio flinger for functional, privacy and security reasons.
-@@ -1805,6 +1913,10 @@ status_t AudioFlinger::setParameters(audio_io_handle_t ioHandle, const String8&
+@@ -1805,6 +1918,10 @@ status_t AudioFlinger::setParameters(audio_io_handle_t ioHandle, const String8&
      ALOGV("setParameters(): io %d, keyvalue %s, calling pid %d calling uid %d",
              ioHandle, keyValuePairs.c_str(),
              IPCThreadState::self()->getCallingPid(), IPCThreadState::self()->getCallingUid());
@@ -225,7 +230,7 @@ index a3a893bd61..51d8b4135f 100644
  
      // check calling permissions
      VALUE_OR_RETURN_CONVERTED(enforceCallingPermission(MODIFY_AUDIO_SETTINGS));
-@@ -1816,9 +1928,11 @@ status_t AudioFlinger::setParameters(audio_io_handle_t ioHandle, const String8&
+@@ -1816,9 +1933,11 @@ status_t AudioFlinger::setParameters(audio_io_handle_t ioHandle, const String8&
  
      // AUDIO_IO_HANDLE_NONE means the parameters are global to the audio hardware interface
      if (ioHandle == AUDIO_IO_HANDLE_NONE) {
@@ -238,7 +243,7 @@ index a3a893bd61..51d8b4135f 100644
          {
              audio_utils::lock_guard lock(hardwareMutex());
              mHardwareStatus = AUDIO_HW_SET_PARAMETER;
-@@ -1853,6 +1967,82 @@ status_t AudioFlinger::setParameters(audio_io_handle_t ioHandle, const String8&
+@@ -1853,6 +1972,77 @@ status_t AudioFlinger::setParameters(audio_io_handle_t ioHandle, const String8&
                  mScreenState = ((mScreenState & ~1) + 2) | isOff;
              }
          }
@@ -254,9 +259,11 @@ index a3a893bd61..51d8b4135f 100644
 +                    ctrl->onUpmixHeadphoneMode(upmixMode);
 +                }
 +                if (ctrl != nullptr && oldMode != upmixMode) {
-+                    ALOGI("setParameters : invalidate music tracks, upmix mode change: %d -> %d",
++                    ALOGI("setParameters : schedule music invalidate for upmix mode change: %d -> %d",
 +                          oldMode, upmixMode);
-+                    invalidateMusicTracksOnAllPlaybackThreads();
++                    scheduleSonyMusicRoutingInvalidate(
++                            this, false,
++                            property_get_int32("vendor.audio.invalidate_sleep_before", 100000));
 +                }
 +            }
 +        }
@@ -301,13 +308,6 @@ index a3a893bd61..51d8b4135f 100644
 +                    ctrl->onSomcExcludedApps(excluded.c_str());
 +                }
 +            }
-+        }
-+        if (strstr(filteredKeyValuePairs.c_str(), "playing_pkg_name") != nullptr ||
-+                strstr(filteredKeyValuePairs.c_str(), "playing_pkg_uid") != nullptr) {
-+            ALOGI("%s: playing pkg change, schedule music invalidate", __func__);
-+            scheduleSonyMusicRoutingInvalidate(
-+                    this, false,
-+                    property_get_int32("vendor.audio.invalidate_sleep_before", 100000));
 +        }
 +        if (sonyRoutingChanged) {
 +            sonyApplySonyRoutingHalState(filteredKeyValuePairs.c_str());
@@ -453,10 +453,10 @@ index 8913ec43bb..d744e00368 100644
      ~AudioFlinger() override;
 diff --git a/services/audioflinger/EffectDapController.cpp b/services/audioflinger/EffectDapController.cpp
 new file mode 100644
-index 0000000000..26e71c2c72
+index 0000000000..e17173eb07
 --- /dev/null
 +++ b/services/audioflinger/EffectDapController.cpp
-@@ -0,0 +1,793 @@
+@@ -0,0 +1,800 @@
 +/*
 + * SPDX-License-Identifier: Apache-2.0
 + */
@@ -766,9 +766,13 @@ index 0000000000..26e71c2c72
 +void EffectDapController::onUpmixPlayingPkg(uid_t uid, const char* packageName) {
 +    {
 +        Mutex::Autolock _l(mLock);
++        const std::string pkgStr = (packageName != nullptr) ? packageName : "";
++        if (mPlayingPkgUid == uid && mPlayingPkgName == pkgStr) {
++            return;
++        }
 +        mPlayingPkgUid = uid;
-+        if (packageName != nullptr && packageName[0] != '\0') {
-+            mPlayingPkgName = packageName;
++        if (!pkgStr.empty()) {
++            mPlayingPkgName = pkgStr;
 +            ALOGI("%s: uid=%u pkg=%s", __func__, uid, packageName);
 +        } else {
 +            mPlayingPkgName.clear();
@@ -1183,7 +1187,10 @@ index 0000000000..26e71c2c72
 +    }
 +    mInvalidateMusicAfterUnlock = false;
 +    if (mAudioFlinger != nullptr) {
-+        mAudioFlinger->invalidateMusicTracksOnAllPlaybackThreads();
++        // Su dung scheduleSonyMusicRoutingInvalidate voi khoang dem em ai de tranh cat ngang buffer audio gay pop
++        scheduleSonyMusicRoutingInvalidate(
++                mAudioFlinger, false,
++                property_get_int32("vendor.audio.invalidate_sleep_before", 100000));
 +    }
 +}
 +
@@ -1628,7 +1635,7 @@ index 0000000000..971440b438
 +
 +} // namespace android
 diff --git a/services/audioflinger/Effects.cpp b/services/audioflinger/Effects.cpp
-index c1047ca02d..2620667a92 100644
+index 0e0c142e1a..1a342416a1 100644
 --- a/services/audioflinger/Effects.cpp
 +++ b/services/audioflinger/Effects.cpp
 @@ -21,6 +21,9 @@
@@ -1652,11 +1659,11 @@ index c1047ca02d..2620667a92 100644
  }
  
  bool EffectBase::suspended() const
-@@ -712,6 +719,16 @@ void EffectModule::process()
+@@ -712,6 +719,27 @@ void EffectModule::process()
  
      if (isProcessEnabled()) {
          int ret;
-+        if ((isDapEffectModule() || isUpmixEffectModule()) && mSkipEffectProcess) {
++        if ((isDapEffectModule() || isUpmixEffectModule()) && mFadeState == FADE_STATE_SKIPPED) {
 +            if (dolbyDebugEnabled()) {
 +                static uint32_t sSkipLogCounter = 0;
 +                if (++sSkipLogCounter % 500 == 1) {
@@ -1666,10 +1673,80 @@ index c1047ca02d..2620667a92 100644
 +            copyInputToOutput();
 +            return;
 +        }
++
++        const bool isRampingSonyEffect = (isDapEffectModule() || isUpmixEffectModule()) &&
++                (mFadeState == FADE_STATE_RAMPING_TO_SKIP || mFadeState == FADE_STATE_RAMPING_FROM_SKIP) &&
++                safeInputOutputSampleCount > 0;
++        if (isRampingSonyEffect) {
++            if (mDryPcmCopy.size() < safeInputOutputSampleCount) {
++                mDryPcmCopy.resize(safeInputOutputSampleCount);
++            }
++            memcpy(mDryPcmCopy.data(), mConfig.inputCfg.buffer.f32,
++                   safeInputOutputSampleCount * sizeof(float));
++        }
          if (isProcessImplemented()) {
              if (auxType) {
                  // We overwrite the aux input buffer here and clear after processing.
-@@ -1556,6 +1573,32 @@ status_t EffectModule::setOffloaded_l(bool offloaded, audio_io_handle_t io)
+@@ -787,6 +815,58 @@ void EffectModule::process()
+                         sizeof(float),
+                         sizeof(float) * outChannelCount * mConfig.outputCfg.buffer.frameCount);
+             }
++
++            if (isRampingSonyEffect) {
++                // Thuc hien smooth crossfade giua Dry (mDryPcmCopy) va Wet (mConfig.outputCfg.buffer.f32)
++                const uint32_t frameCount = std::min(mConfig.inputCfg.buffer.frameCount,
++                                                    mConfig.outputCfg.buffer.frameCount);
++                const uint32_t channels = mOutChannelCountRequested;
++                if (mFadeTotalFrames == 0) {
++                    mFadeTotalFrames = std::max(frameCount, 480u); // ~10ms o 48kHz
++                }
++                float* outPcm = mConfig.outputCfg.buffer.f32;
++                const float* dryPcm = mDryPcmCopy.data();
++
++                for (uint32_t f = 0; f < frameCount; ++f) {
++                    const uint32_t currentFrame = mFadeFrameProgress + f;
++                    float progress = (mFadeTotalFrames > 0)
++                            ? static_cast<float>(currentFrame) / static_cast<float>(mFadeTotalFrames)
++                            : 1.0f;
++                    if (progress > 1.0f) progress = 1.0f;
++
++                    float gainWet = 0.0f;
++                    float gainDry = 0.0f;
++                    if (mFadeState == FADE_STATE_RAMPING_TO_SKIP) {
++                        gainWet = 1.0f - progress;
++                        gainDry = progress;
++                    } else {
++                        gainWet = progress;
++                        gainDry = 1.0f - progress;
++                    }
++
++                    for (uint32_t c = 0; c < channels; ++c) {
++                        const size_t idx = f * channels + c;
++                        if (idx < safeInputOutputSampleCount) {
++                            outPcm[idx] = outPcm[idx] * gainWet + dryPcm[idx] * gainDry;
++                        }
++                    }
++                }
++
++                mFadeFrameProgress += frameCount;
++                if (mFadeFrameProgress >= mFadeTotalFrames) {
++                    if (mFadeState == FADE_STATE_RAMPING_TO_SKIP) {
++                        mFadeState = FADE_STATE_SKIPPED;
++                        ALOGI("%s: Sony effect (%s) ramp to skip complete", __func__,
++                              isDapEffectModule() ? "DAP" : "360 Upmix");
++                    } else {
++                        mFadeState = FADE_STATE_ACTIVE;
++                        ALOGI("%s: Sony effect (%s) ramp to active complete", __func__,
++                              isDapEffectModule() ? "DAP" : "360 Upmix");
++                    }
++                    mFadeFrameProgress = 0;
++                    mFadeTotalFrames = 0;
++                }
++            }
+         } else {
+             data_bypass:
+             if (!auxType  /* aux effects do not require data bypass */
+@@ -1556,6 +1636,32 @@ status_t EffectModule::setOffloaded_l(bool offloaded, audio_io_handle_t io)
      return status;
  }
  
@@ -1702,19 +1779,26 @@ index c1047ca02d..2620667a92 100644
  bool EffectModule::isOffloaded_l() const
  {
      audio_utils::lock_guard _l(mutex());
-@@ -1762,6 +1805,11 @@ void EffectModule::dump(int fd, const Vector<String16>& args) const {
+@@ -1762,6 +1868,18 @@ void EffectModule::dump(int fd, const Vector<String16>& args) const {
              dumpInOutBuffer(false /* isInput */, mOutBuffer).c_str(),
              dumpInOutBuffer(false /* isInput */, mOutConversionBuffer).c_str());
  
 +    if (isDapEffectModule() || isUpmixEffectModule()) {
-+        result.appendFormat("\t\t- skipEffectProcess: %s\n",
-+                mSkipEffectProcess ? "skip" : "not skip");
++        const char* fadeStateStr = "UNKNOWN";
++        switch (mFadeState) {
++            case FADE_STATE_ACTIVE: fadeStateStr = "ACTIVE"; break;
++            case FADE_STATE_RAMPING_TO_SKIP: fadeStateStr = "RAMPING_TO_SKIP"; break;
++            case FADE_STATE_SKIPPED: fadeStateStr = "SKIPPED"; break;
++            case FADE_STATE_RAMPING_FROM_SKIP: fadeStateStr = "RAMPING_FROM_SKIP"; break;
++        }
++        result.appendFormat("\t\t- skipEffectProcess: %s (fadeState: %s)\n",
++                mSkipEffectProcess ? "skip" : "not skip", fadeStateStr);
 +    }
 +
      write(fd, result.c_str(), result.length());
  
      if (mEffectInterface != 0) {
-@@ -2616,6 +2664,9 @@ size_t EffectChain::removeEffect(const sp<IAfEffectModule>& effect,
+@@ -2616,6 +2734,9 @@ size_t EffectChain::removeEffect(const sp<IAfEffectModule>& effect,
                  mEffects[i]->stop_l();
              }
              if (release) {
@@ -1724,27 +1808,82 @@ index c1047ca02d..2620667a92 100644
                  mEffects[i]->release_l("EffectChain::removeEffect");
              }
              // Skip operation when no thread attached (could lead to sigfpe as framecount is 0...)
-@@ -2981,6 +3032,19 @@ static const effect_uuid_t SL_IID_DAP_SW_ = // 9d4921da-8225-4f29-aefa-39537a04b
- { 0x9d4921da, 0x8225, 0x4f29, 0xaefa, {0x39, 0x53, 0x7a, 0x04, 0xbc, 0xaa} };
- const effect_uuid_t * const SL_IID_DAP_SW = &SL_IID_DAP_SW_;
+@@ -2986,6 +3107,52 @@ static const effect_uuid_t SL_IID_DAP_OFFLOAD_ =
+ { 0xfa81dbde, 0x588b, 0x11ed, 0x9b6a, {0x02, 0x42, 0xac, 0x12, 0x00, 0x02} };
+ const effect_uuid_t * const SL_IID_DAP_OFFLOAD = &SL_IID_DAP_OFFLOAD_;
  
 +bool EffectModule::isDapEffectModule() const {
 +    return memcmp(&mDescriptor.type, SL_IID_DAP, sizeof(effect_uuid_t)) == 0
 +            || memcmp(&mDescriptor.type, SL_IID_DAP_SW, sizeof(effect_uuid_t)) == 0
++            || memcmp(&mDescriptor.type, SL_IID_DAP_OFFLOAD, sizeof(effect_uuid_t)) == 0
 +            || memcmp(&mDescriptor.uuid, SL_IID_DAP_SW, sizeof(effect_uuid_t)) == 0;
 +}
 +
++// Sony 360 Upmix
++static const effect_uuid_t kUpmixUuid = {
++    0xeced456e, 0xa166, 0xfcf1, 0x5c7b, {0x44, 0xa2, 0x70, 0x1d, 0xaa, 0x1c}};
++
 +bool EffectModule::isUpmixEffectModule() const {
-+    static const effect_uuid_t kUpmixUuid = {
-+        0xeced456e, 0xa166, 0xfcf1, 0x5c7b, {0x44, 0xa2, 0x70, 0x1d, 0xaa, 0x1c}};
 +    return memcmp(&mDescriptor.uuid, &kUpmixUuid, sizeof(effect_uuid_t)) == 0
 +            || memcmp(&mDescriptor.type, &kUpmixUuid, sizeof(effect_uuid_t)) == 0;
++}
++
++void EffectModule::setSkipEffectProcess(bool skip) {
++    if (mSkipEffectProcess == skip) {
++        return;
++    }
++    mSkipEffectProcess = skip;
++
++    if (isDapEffectModule() || isUpmixEffectModule()) {
++        // Tren global session 0 activeTrackCnt luon bang 0, can tinh isPlaying theo session 0
++        const bool isGlobal = audio_is_global_session(sessionId());
++        const bool isPlaying = isProcessEnabled() &&
++                (isGlobal || (getCallback() != nullptr && getCallback()->activeTrackCnt() > 0));
++        if (!isPlaying) {
++            mFadeState = skip ? FADE_STATE_SKIPPED : FADE_STATE_ACTIVE;
++            mFadeFrameProgress = 0;
++            mFadeTotalFrames = 0;
++            return;
++        }
++
++        if (skip) {
++            mFadeState = FADE_STATE_RAMPING_TO_SKIP;
++            mFadeFrameProgress = 0;
++            mFadeTotalFrames = 0;
++        } else {
++            mFadeState = FADE_STATE_RAMPING_FROM_SKIP;
++            mFadeFrameProgress = 0;
++            mFadeTotalFrames = 0;
++        }
++    }
 +}
 +
  // ViperFx
  static const effect_uuid_t SL_V4A_RE_ = // 90380da3-8536-4744-a6a3-5731970e640f
  { 0x90380da3, 0x8536, 0x4744, 0xa6a3, {0x57, 0x31, 0x97, 0x0e, 0x64, 0x0f} };
-@@ -3919,4 +3983,28 @@ void DeviceEffectProxy::ProxyCallback::onEffectDisable(
+@@ -3020,6 +3187,8 @@ bool EffectChain::isEffectEligibleForSuspend(const effect_descriptor_t& desc)
+           (memcmp(&desc.type, SL_IID_DAP_OFFLOAD, sizeof(effect_uuid_t)) == 0) ||
+           (memcmp(&desc.type, SL_V4A_RE, sizeof(effect_uuid_t)) == 0) ||
+           (memcmp(&desc.type, SL_AXFX, sizeof(effect_uuid_t)) == 0) ||
++          (memcmp(&desc.type, &kUpmixUuid, sizeof(effect_uuid_t)) == 0) ||
++          (memcmp(&desc.uuid, &kUpmixUuid, sizeof(effect_uuid_t)) == 0) ||
+           (memcmp(&desc.type, SL_IID_DYNAMICSPROCESSING, sizeof(effect_uuid_t)) == 0)))) {
+         return false;
+     }
+@@ -3413,7 +3582,11 @@ void EffectChain::EffectCallback::checkSuspendOnEffectEnabled(const sp<IAfEffect
+     if (t == nullptr) {
+         return;
+     }
+-    t->checkSuspendOnEffectEnabled(enabled, effect->sessionId(), threadLocked);
++    // Volume listener la listener noi bo cua Dolby/Sony khong phai effect am thanh,
++    // khong suspend session 0 khi listener duoc bat tren session client
++    if (!EffectDapController::isDlbVolumeListenerEffect(effect)) {
++        t->checkSuspendOnEffectEnabled(enabled, effect->sessionId(), threadLocked);
++    }
+ 
+     sp<IAfEffectChain> c = chain().promote();
+     if (c == nullptr) {
+@@ -3925,4 +4098,28 @@ void DeviceEffectProxy::ProxyCallback::onEffectDisable(
      effect->stop_l();
  }
  
@@ -1774,7 +1913,7 @@ index c1047ca02d..2620667a92 100644
 +
  } // namespace android
 diff --git a/services/audioflinger/Effects.h b/services/audioflinger/Effects.h
-index e9de3f2d09..3be12ba093 100644
+index e9de3f2d09..5e9cdf933a 100644
 --- a/services/audioflinger/Effects.h
 +++ b/services/audioflinger/Effects.h
 @@ -226,6 +226,8 @@ public:
@@ -1790,7 +1929,7 @@ index e9de3f2d09..3be12ba093 100644
      bool isSpatializer() const final;
      bool isEffect(const effect_uuid_t &uuid) const;
  
-+    void setSkipEffectProcess(bool skip) final { mSkipEffectProcess = skip; }
++    void setSkipEffectProcess(bool skip) final;
 +    bool skipEffectProcess() const final { return mSkipEffectProcess; }
 +    bool isDapEffectModule() const;
 +    bool isUpmixEffectModule() const;
@@ -1798,16 +1937,27 @@ index e9de3f2d09..3be12ba093 100644
      status_t setHapticScale_l(int id, os::HapticScale hapticScale) final
              REQUIRES(audio_utils::EffectChain_Mutex) EXCLUDES_EffectBase_Mutex;
      status_t setVibratorInfo_l(const media::AudioVibratorInfo& vibratorInfo) final
-@@ -293,6 +300,8 @@ private:
+@@ -293,6 +300,19 @@ private:
      uint32_t mInChannelCountRequested;
      uint32_t mOutChannelCountRequested;
  
++    enum EffectFadeState {
++        FADE_STATE_ACTIVE = 0,         // Dang xu ly effect binh thuong (100% wet)
++        FADE_STATE_RAMPING_TO_SKIP,    // Dang fade out wet (1.0 -> 0.0), fade in dry (0.0 -> 1.0)
++        FADE_STATE_SKIPPED,            // Da skip hoan toan (100% dry / passthrough)
++        FADE_STATE_RAMPING_FROM_SKIP,  // Dang fade in wet (0.0 -> 1.0), fade out dry (1.0 -> 0.0)
++    };
++
 +    bool mSkipEffectProcess = false;
++    EffectFadeState mFadeState = FADE_STATE_ACTIVE;
++    uint32_t mFadeFrameProgress = 0;
++    uint32_t mFadeTotalFrames = 0;
++    std::vector<float> mDryPcmCopy;
 +
      template <typename MUTEX>
      class AutoLockReentrant {
      public:
-@@ -903,4 +912,8 @@ private:
+@@ -903,4 +923,8 @@ private:
      const bool mNotifyFramesProcessed;
  };
  

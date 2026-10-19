@@ -15,6 +15,9 @@ Dưới đây là repo sibling hoàn thiện cùng stack — **không** nhân b�
 | Kernel DTS CS40 boost | [`kernel/sony/sm8550-devicetrees`](https://github.com/danhancach/android_kernel_sony_sm8550-devicetrees) | |
 | Proprietary Dolby / 360RA / DSEE / SoundEnhancement | [`vendor/sony/audio`](https://github.com/danhancach/proprietary_vendor_sony_audio) (`pdx237`) | Chỉ blobs / configs / sepolicy |
 
-Hub liên quan (xem `series.txt`): `frameworks/av/0001`–`0003`, APM SPEAKER_SAFE, `frameworks/base` SPEAKER_SAFE sync, `system/media` FCC 360RA.
+Hub liên quan (xem `series.txt`): `frameworks/av/0001`–`0004`, APM SPEAKER_SAFE, `system/media` FCC 360RA.
+`frameworks/base` audio hardening và SPEAKER_SAFE sync thuộc fork `danhancach/frameworks_base` (`cnb`), không có patch trùng trong hub.
+
+Mode transition / anti-pop (cùng `hardware/sony` SoundEnhancement + `vendor/sony/audio/DSEE` `invalidate_sleep_*`): `0001` settle khi `dsee_hx_state=0`; `0004` giữ Dolby HAL khi DMS reconnect.
 
 `0001` EffectDapController: không gửi `SET_BYPASS` / `SKIP_HARD_BYPASS` xuống `libswdap` (blob reject). Bypass qua `mBypassed` + HAL `dle_ds_state`.
