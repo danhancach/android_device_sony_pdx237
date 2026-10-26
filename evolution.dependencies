@@ -51,6 +51,6 @@
     "repository": "danhancach/vendor_sony_audio",
     "target_path": "vendor/sony/audio",
     "remote": "github-non-los",
-    "branch": "check-dolby"
+    "branch": "pdx237"
   }
 ]

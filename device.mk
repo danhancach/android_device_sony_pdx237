@@ -40,7 +40,6 @@ PRODUCT_COPY_FILES += \
 
 # Overlays (RRO)
 PRODUCT_PACKAGES += \
-    ApertureResTarget \
     EvolutionSettingsResTarget \
     SonyPDX237NfcNciRes \
     SonyPDX237SystemUIRes
