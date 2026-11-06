@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     Layout QS mac dinh pdx237 (luoi 4 cot).
+     Tile lon: wifi, bt, flashlight, refresh_rate.
+-->
+<resources>
+    <!-- Thu tu tile QS khi tach internet (wifi / cell) -->
+    <string name="quick_settings_tiles_default_split" translatable="false">wifi,bt,rotation,flashlight,custom(com.sonyericsson.soundenhancement/.SpeakerPortraitMonoTileService),refresh_rate,screenrecord,controls,custom(com.google.android.gms/.nearby.sharing.SharingTileService),qr_code_scanner,custom(com.xperia.settings.charger/.ChargerTileService),cpuinfo</string>
+
+    <!-- Tile lon mac dinh, cung thu tu hien tren panel -->
+    <string-array name="quick_settings_large_tiles_default_split" translatable="false">
+        <item>wifi</item>
+        <item>bt</item>
+        <item>flashlight</item>
+        <item>refresh_rate</item>
+    </string-array>
+</resources>
