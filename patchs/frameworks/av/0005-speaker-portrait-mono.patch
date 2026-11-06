@@ -1,0 +1,882 @@
+From 6c776e97ab0e14a49a0e9ababfbdc6b569f2b97a Mon Sep 17 00:00:00 2001
+From: danhancach <111163507+danhancach@users.noreply.github.com>
+Date: Fri, 6 Nov 2026 15:02:25 +0900
+Subject: [PATCH] audio: Restrict portrait mono to built-in speaker outputs
+
+Combine the dedicated request with accessibility mono per output. Blend DIRECT
+PCM, including packed 24-bit samples, without modifying haptic channels. Keep
+external outputs eligible for offload/MMAP and require supported PCM fallback
+on the speaker while portrait mono is active.
+
+Related:
+- device/sony/pdx237/patchs/frameworks/av/0005-speaker-portrait-mono.patch
+- hardware/sony: SoundEnhancement Speaker mono preference and Quick Settings tile
+- vendor/sony/audio: stop daxService from writing accessibility master_mono
+---
+ media/libaudioclient/AudioSystem.cpp          |   6 +
+ .../android/media/IAudioPolicyService.aidl    |   6 +
+ .../include/media/AudioSystem.h               |   1 +
+ services/audioflinger/DirectPcmMono.h         | 125 +++++++++++
+ services/audioflinger/Threads.cpp             |  37 ++++
+ services/audioflinger/Threads.h               |   8 +
+ services/audiopolicy/AudioPolicyInterface.h   |   1 +
+ .../managerdefault/AudioPolicyManager.cpp     |  94 ++++++++-
+ .../managerdefault/AudioPolicyManager.h       |  21 +-
+ .../managerdefault/SpeakerPortraitMono.h      |  64 ++++++
+ .../host/SpeakerPortraitMonoPolicyCheck.java  |  27 +++
+ .../speaker_portrait_mono_test.cpp            | 197 ++++++++++++++++++
+ .../service/AudioPolicyInterfaceImpl.cpp      |  13 ++
+ .../service/AudioPolicyService.cpp            |   5 +
+ .../audiopolicy/service/AudioPolicyService.h  |   1 +
+ 15 files changed, 604 insertions(+), 2 deletions(-)
+ create mode 100644 services/audioflinger/DirectPcmMono.h
+ create mode 100644 services/audiopolicy/managerdefault/SpeakerPortraitMono.h
+ create mode 100644 services/audiopolicy/managerdefault/host/SpeakerPortraitMonoPolicyCheck.java
+ create mode 100644 services/audiopolicy/managerdefault/speaker_portrait_mono_test.cpp
+
+diff --git a/media/libaudioclient/AudioSystem.cpp b/media/libaudioclient/AudioSystem.cpp
+index 0e44c66fab..11221feb9c 100644
+--- a/media/libaudioclient/AudioSystem.cpp
++++ b/media/libaudioclient/AudioSystem.cpp
+@@ -2287,6 +2287,12 @@ status_t AudioSystem::setMasterMono(bool mono) {
+     return statusTFromBinderStatus(aps->setMasterMono(mono));
+ }
+ 
++status_t AudioSystem::setSpeakerPortraitMono(bool mono) {
++    const sp<IAudioPolicyService> aps = get_audio_policy_service();
++    if (aps == nullptr) return AudioPolicyServiceTraits::getError();
++    return statusTFromBinderStatus(aps->setSpeakerPortraitMono(mono));
++}
++
+ status_t AudioSystem::getMasterMono(bool* mono) {
+     if (mono == nullptr) {
+         return BAD_VALUE;
+diff --git a/media/libaudioclient/aidl/android/media/IAudioPolicyService.aidl b/media/libaudioclient/aidl/android/media/IAudioPolicyService.aidl
+index d41215e0ae..d6a0d20950 100644
+--- a/media/libaudioclient/aidl/android/media/IAudioPolicyService.aidl
++++ b/media/libaudioclient/aidl/android/media/IAudioPolicyService.aidl
+@@ -565,4 +565,10 @@ interface IAudioPolicyService {
+      * Returns if mmap path is preferred for pcm offload playback.
+      */
+     boolean useMmapForPcmOffload();
++
++    /**
++     * Yeu cau mono chi tren loa may.
++     * Giu nguyen master mono cua Accessibility.
++     */
++    void setSpeakerPortraitMono(boolean mono);
+ }
+diff --git a/media/libaudioclient/include/media/AudioSystem.h b/media/libaudioclient/include/media/AudioSystem.h
+index e8a200a284..9520d4b3a9 100644
+--- a/media/libaudioclient/include/media/AudioSystem.h
++++ b/media/libaudioclient/include/media/AudioSystem.h
+@@ -584,6 +584,7 @@ public:
+ 
+     static status_t setMasterMono(bool mono);
+     static status_t getMasterMono(bool *mono);
++    static status_t setSpeakerPortraitMono(bool mono);
+ 
+     static status_t setMasterBalance(float balance);
+     static status_t getMasterBalance(float *balance);
+diff --git a/services/audioflinger/DirectPcmMono.h b/services/audioflinger/DirectPcmMono.h
+new file mode 100644
+index 0000000000..d1d1e76be0
+--- /dev/null
++++ b/services/audioflinger/DirectPcmMono.h
+@@ -0,0 +1,125 @@
++#pragma once
++
++#include <cstddef>
++#include <cstdint>
++
++// Tron mono cho DIRECT PCM. Khong phu thuoc AudioPolicyManager.
++namespace direct_pcm_mono {
++
++enum class PcmSample : int {
++    kUnsupported = 0,
++    kS16 = 1,
++    kS32 = 2,
++    kFloat = 3,
++    kS24Packed = 4,
++};
++
++constexpr int32_t kS24Min = -8388608;
++constexpr int32_t kS24Max = 8388607;
++
++inline bool shouldBlendDirectPcm(bool monoParamOnThisOutput, bool directPcmThread, bool linearPcm) {
++    return monoParamOnThisOutput && directPcmThread && linearPcm;
++}
++
++// 24-bit packed little-endian, co dau. Khong doc nhu int32.
++inline int32_t readS24Le(const uint8_t* p) {
++    int32_t value = static_cast<int32_t>(p[0])
++            | (static_cast<int32_t>(p[1]) << 8)
++            | (static_cast<int32_t>(p[2]) << 16);
++    if ((value & 0x800000) != 0) {
++        value |= ~0xFFFFFF;
++    }
++    return value;
++}
++
++inline void writeS24Le(uint8_t* p, int32_t value) {
++    if (value > kS24Max) {
++        value = kS24Max;
++    } else if (value < kS24Min) {
++        value = kS24Min;
++    }
++    p[0] = static_cast<uint8_t>(value & 0xFF);
++    p[1] = static_cast<uint8_t>((value >> 8) & 0xFF);
++    p[2] = static_cast<uint8_t>((value >> 16) & 0xFF);
++}
++
++// Khung xen ke: audio truoc, haptic sau. Buoc nhay = audio + haptic mau.
++// Trung binh lap lai van la mono. Bo dem khong can can theo 4 byte.
++inline void averageAudioChannels(void* buf, PcmSample sample, size_t audioChannels,
++        size_t hapticChannels, size_t frames) {
++    if (buf == nullptr || audioChannels < 2 || frames == 0 || sample == PcmSample::kUnsupported) {
++        return;
++    }
++    const size_t stride = audioChannels + hapticChannels;
++    if (sample == PcmSample::kS16) {
++        int16_t* out = static_cast<int16_t*>(buf);
++        for (size_t i = 0; i < frames; ++i) {
++            int accum = 0;
++            for (size_t ch = 0; ch < audioChannels; ++ch) {
++                accum += out[ch];
++            }
++            accum /= static_cast<int>(audioChannels);
++            for (size_t ch = 0; ch < audioChannels; ++ch) {
++                out[ch] = static_cast<int16_t>(accum);
++            }
++            out += stride;
++        }
++        return;
++    }
++    if (sample == PcmSample::kS32) {
++        int32_t* out = static_cast<int32_t*>(buf);
++        for (size_t i = 0; i < frames; ++i) {
++            int64_t accum = 0;
++            for (size_t ch = 0; ch < audioChannels; ++ch) {
++                accum += out[ch];
++            }
++            accum /= static_cast<int64_t>(audioChannels);
++            for (size_t ch = 0; ch < audioChannels; ++ch) {
++                out[ch] = static_cast<int32_t>(accum);
++            }
++            out += stride;
++        }
++        return;
++    }
++    if (sample == PcmSample::kS24Packed) {
++        uint8_t* out = static_cast<uint8_t*>(buf);
++        const size_t strideBytes = stride * 3;
++        for (size_t i = 0; i < frames; ++i) {
++            int64_t accum = 0;
++            for (size_t ch = 0; ch < audioChannels; ++ch) {
++                accum += readS24Le(out + ch * 3);
++            }
++            accum /= static_cast<int64_t>(audioChannels);
++            const int32_t mixed = static_cast<int32_t>(accum);
++            for (size_t ch = 0; ch < audioChannels; ++ch) {
++                writeS24Le(out + ch * 3, mixed);
++            }
++            out += strideBytes;
++        }
++        return;
++    }
++    float* out = static_cast<float*>(buf);
++    const float scale = 1.f / static_cast<float>(audioChannels);
++    for (size_t i = 0; i < frames; ++i) {
++        float accum = 0.f;
++        for (size_t ch = 0; ch < audioChannels; ++ch) {
++            accum += out[ch];
++        }
++        accum *= scale;
++        for (size_t ch = 0; ch < audioChannels; ++ch) {
++            out[ch] = accum;
++        }
++        out += stride;
++    }
++}
++
++// mFrameSize cua direct = (audio + haptic) * byte/mau, ke ca sau khi tach mask haptic.
++inline bool frameStrideMatches(size_t frameSize, size_t audioChannels, size_t hapticChannels,
++        size_t bytesPerSample) {
++    if (bytesPerSample == 0) {
++        return false;
++    }
++    return frameSize == (audioChannels + hapticChannels) * bytesPerSample;
++}
++
++}  // namespace direct_pcm_mono
+diff --git a/services/audioflinger/Threads.cpp b/services/audioflinger/Threads.cpp
+index c2c78fbb85..3e9afee15c 100644
+--- a/services/audioflinger/Threads.cpp
++++ b/services/audioflinger/Threads.cpp
+@@ -48,6 +48,7 @@
+ #include <audio_utils/format.h>
+ #include <audio_utils/minifloat.h>
+ #include <audio_utils/mono_blend.h>
++#include "DirectPcmMono.h"
+ #include <audio_utils/primitives.h>
+ #include <audio_utils/safe_math.h>
+ #include <audiomanager/AudioManager.h>
+@@ -7382,6 +7383,42 @@ void DirectOutputThread::threadLoop_mix()
+     mActiveTrack.clear();
+ }
+ 
++ssize_t DirectOutputThread::threadLoop_write()
++{
++    // Chi DIRECT PCM. OFFLOAD ke thua class nay nhung mType khac DIRECT.
++    // Lan ghi dau cua buffer (remaining == current) moi tron. Ghi le sau do dung offset
++    // tren cung buffer da tron, khong tron lai.
++    if (direct_pcm_mono::shouldBlendDirectPcm(
++                mDirectMono.load(), mType == DIRECT, audio_has_proportional_frames(mFormat))
++            && mBytesRemaining == mCurrentWriteLength && mFrameSize != 0
++            && direct_pcm_mono::frameStrideMatches(
++                    mFrameSize, mChannelCount, mHapticChannelCount,
++                    audio_bytes_per_sample(mFormat))) {
++        direct_pcm_mono::PcmSample sample = direct_pcm_mono::PcmSample::kUnsupported;
++        switch (mFormat) {
++            case AUDIO_FORMAT_PCM_16_BIT:
++                sample = direct_pcm_mono::PcmSample::kS16;
++                break;
++            case AUDIO_FORMAT_PCM_32_BIT:
++            case AUDIO_FORMAT_PCM_8_24_BIT:
++                sample = direct_pcm_mono::PcmSample::kS32;
++                break;
++            case AUDIO_FORMAT_PCM_24_BIT_PACKED:
++                sample = direct_pcm_mono::PcmSample::kS24Packed;
++                break;
++            case AUDIO_FORMAT_PCM_FLOAT:
++                sample = direct_pcm_mono::PcmSample::kFloat;
++                break;
++            default:
++                break;
++        }
++        const size_t frames = mCurrentWriteLength / mFrameSize;
++        direct_pcm_mono::averageAudioChannels(
++                mSinkBuffer, sample, mChannelCount, mHapticChannelCount, frames);
++    }
++    return PlaybackThread::threadLoop_write();
++}
++
+ void DirectOutputThread::threadLoop_sleepTime()
+ {
+     // do not write to HAL when paused
+diff --git a/services/audioflinger/Threads.h b/services/audioflinger/Threads.h
+index cf69f28af9..21f7ff09b6 100644
+--- a/services/audioflinger/Threads.h
++++ b/services/audioflinger/Threads.h
+@@ -1872,6 +1872,7 @@ protected:
+     mixer_state prepareTracks_l(std::vector<sp<IAfTrackBase>>* tracksToRemove) override
+             REQUIRES(mutex(), ThreadBase_ThreadLoop);
+     void threadLoop_mix() final REQUIRES(ThreadBase_ThreadLoop);
++    ssize_t threadLoop_write() override REQUIRES(ThreadBase_ThreadLoop);
+     void threadLoop_sleepTime() final REQUIRES(ThreadBase_ThreadLoop);
+     void threadLoop_exit() override REQUIRES(ThreadBase_ThreadLoop);
+     bool shouldStandby_l() final REQUIRES(mutex());
+@@ -1894,6 +1895,8 @@ protected:
+ 
+     wp<IAfTrack>               mPreviousTrack;         // used to detect track switch
+ 
++    std::atomic_bool mDirectMono{false};
++
+     // This must be initialized for initial condition of mMasterBalance = 0 (disabled).
+     float                   mMasterBalanceLeft = 1.f;
+     float                   mMasterBalanceRight = 1.f;
+@@ -1901,6 +1904,11 @@ protected:
+ public:
+     virtual     bool        hasFastMixer() const { return false; }
+ 
++    // keyMonoOutput: mixer da tron; DIRECT PCM tron tai day. OFFLOAD khong tron.
++    void setMasterMono_l(bool mono) override REQUIRES(mutex()) {
++        mDirectMono.store(mono);
++    }
++
+     virtual int64_t computeWaitTimeNs_l() const override REQUIRES(mutex());
+ 
+     status_t    threadloop_getHalTimestamp_l(ExtendedTimestamp *timestamp) const override {
+diff --git a/services/audiopolicy/AudioPolicyInterface.h b/services/audiopolicy/AudioPolicyInterface.h
+index 4d51bbcb0d..77ccbc0134 100644
+--- a/services/audiopolicy/AudioPolicyInterface.h
++++ b/services/audiopolicy/AudioPolicyInterface.h
+@@ -390,6 +390,7 @@ public:
+ 
+     virtual status_t setMasterMono(bool mono) = 0;
+     virtual status_t getMasterMono(bool *mono) = 0;
++    virtual status_t setSpeakerPortraitMono(bool mono) = 0;
+ 
+     virtual float    getStreamVolumeDB(
+                 audio_stream_type_t stream, int index, audio_devices_t device) = 0;
+diff --git a/services/audiopolicy/managerdefault/AudioPolicyManager.cpp b/services/audiopolicy/managerdefault/AudioPolicyManager.cpp
+index b04b64ad6e..84843a4325 100644
+--- a/services/audiopolicy/managerdefault/AudioPolicyManager.cpp
++++ b/services/audiopolicy/managerdefault/AudioPolicyManager.cpp
+@@ -56,6 +56,7 @@
+ #include <utils/Log.h>
+ 
+ #include "AudioPolicyManager.h"
++
+ #include "SonyDolbyAudioPolicy.h"
+ #include "Sony360RAudioPolicy.h"
+ #include "SpatializerHelper.h"
+@@ -63,6 +64,11 @@
+ 
+ namespace android {
+ 
++static_assert(AUDIO_DEVICE_OUT_SPEAKER == speaker_portrait_mono::kDeviceOutSpeaker,
++        "speaker device type");
++static_assert(AUDIO_DEVICE_OUT_SPEAKER_SAFE == speaker_portrait_mono::kDeviceOutSpeakerSafe,
++        "speaker safe device type");
++
+ namespace audio_flags = android::media::audiopolicy;
+ 
+ using android::media::audio::common::AudioConfigBase;
+@@ -1766,8 +1772,20 @@ status_t AudioPolicyManager::openDirectOutput(audio_stream_type_t stream,
+     sp<IOProfile> profile;
+ 
+     auto lookupDirectProfile = [&](audio_format_t fmt) -> sp<IOProfile> {
++        // Offload va MMAP khong tron mono. Chan ca hai tren loa trong khi portrait mono dang bat.
++        // MMAP o tai nghe/BT/USB van mo. getOutputForDevices tra NONE cho co MMAP;
++        // AAudio policy AUTO mo lai duong legacy, policy ALWAYS thi mo that bai.
++        const auto deviceTypes = devices.types();
++        const bool speakerOnly = speaker_portrait_mono::isBuiltinLoudspeakerOnly(
++                deviceTypes.begin(), deviceTypes.end());
++        if (speaker_portrait_mono::shouldRefuseMmapOnSpeaker(
++                mSpeakerPortraitMono, (flags & AUDIO_OUTPUT_FLAG_MMAP_NOIRQ) != 0,
++                speakerOnly)) {
++            return nullptr;
++        }
+         if ((flags & AUDIO_OUTPUT_FLAG_COMPRESS_OFFLOAD) != 0 &&
+-                (mEffects.isNonOffloadableEffectEnabled(session) || mMasterMono)) {
++                (mEffects.isNonOffloadableEffectEnabled(session) || mMasterMono
++                        || (mSpeakerPortraitMono && speakerOnly))) {
+             return nullptr;
+         }
+         return getProfileForOutput(
+@@ -6776,6 +6794,74 @@ status_t AudioPolicyManager::setMasterMono(bool mono)
+     return NO_ERROR;
+ }
+ 
++status_t AudioPolicyManager::setSpeakerPortraitMono(bool mono)
++{
++    if (mSpeakerPortraitMono == mono) {
++        return NO_ERROR;
++    }
++    mSpeakerPortraitMono = mono;
++    // Dong offload va MMAP dang gan loa trong. DIRECT PCM (DSEE) va mixer giu route.
++    // Client mo lai: offload thanh PCM, MMAP thanh legacy neu policy khong phai ALWAYS.
++    if (mSpeakerPortraitMono) {
++        std::vector<audio_io_handle_t> unblended;
++        for (size_t i = 0; i < mOutputs.size(); ++i) {
++            sp<SwAudioOutputDescriptor> desc = mOutputs.valueAt(i);
++            const auto types = desc->devices().types();
++            const bool speakerOnly = speaker_portrait_mono::isBuiltinLoudspeakerOnly(
++                    types.begin(), types.end());
++            const bool offload = (desc->mFlags & AUDIO_OUTPUT_FLAG_COMPRESS_OFFLOAD) != 0;
++            const bool mmap = (desc->mFlags & AUDIO_OUTPUT_FLAG_MMAP_NOIRQ) != 0;
++            if (speakerOnly && (offload || mmap)) {
++                unblended.push_back(desc->mIoHandle);
++            }
++        }
++        for (const auto& handle : unblended) {
++            closeOutput(handle);
++        }
++    }
++    for (size_t i = 0; i < mOutputs.size(); ++i) {
++        updateMono(mOutputs.keyAt(i));
++    }
++    return NO_ERROR;
++}
++
++void AudioPolicyManager::invalidateOffloadOrMmapMovedToSpeaker_l(
++        const sp<SwAudioOutputDescriptor>& outputDesc, const DeviceVector& previousDevices) {
++    if (outputDesc == nullptr || !mSpeakerPortraitMono
++            || (outputDesc->mFlags & (AUDIO_OUTPUT_FLAG_COMPRESS_OFFLOAD
++                    | AUDIO_OUTPUT_FLAG_MMAP_NOIRQ)) == 0) {
++        return;
++    }
++    const auto nowTypes = outputDesc->devices().types();
++    const auto prevTypes = previousDevices.types();
++    const bool nowSpeaker = speaker_portrait_mono::isBuiltinLoudspeakerOnly(
++            nowTypes.begin(), nowTypes.end());
++    const bool prevSpeaker = speaker_portrait_mono::isBuiltinLoudspeakerOnly(
++            prevTypes.begin(), prevTypes.end());
++    const bool offload = (outputDesc->mFlags & AUDIO_OUTPUT_FLAG_COMPRESS_OFFLOAD) != 0;
++    const bool mmap = (outputDesc->mFlags & AUDIO_OUTPUT_FLAG_MMAP_NOIRQ) != 0;
++    if (!speaker_portrait_mono::shouldInvalidateOffloadMovedToSpeaker(
++                    mSpeakerPortraitMono, offload, nowSpeaker, prevSpeaker)
++            && !speaker_portrait_mono::shouldInvalidateMmapMovedToSpeaker(
++                    mSpeakerPortraitMono, mmap, nowSpeaker, prevSpeaker)) {
++        return;
++    }
++    // Khong closeOutput o day: setOutputDevices co the dang nam trong vong lap output.
++    // Client mo lai. Offload va MMAP tren loa trong deu bi tu choi, getOutput tra NONE.
++    PortHandleVector clientsToInvalidate;
++    for (const auto& client : outputDesc->clientsList()) {
++        if (client->isInvalid()) {
++            continue;
++        }
++        clientsToInvalidate.push_back(client->portId());
++    }
++    if (!clientsToInvalidate.empty()) {
++        ALOGI("speaker portrait mono: invalidate %s moved to speaker output %d",
++                mmap ? "mmap" : "offload", outputDesc->mIoHandle);
++        mpClientInterface->invalidateTracks(clientsToInvalidate);
++    }
++}
++
+ status_t AudioPolicyManager::getMasterMono(bool *mono)
+ {
+     *mono = mMasterMono;
+@@ -7349,6 +7435,7 @@ AudioPolicyManager::AudioPolicyManager(const sp<const AudioPolicyConfig>& config
+     mBeaconMuted(false),
+     mTtsOutputAvailable(false),
+     mMasterMono(false),
++    mSpeakerPortraitMono(false),
+     mMusicEffectOutput(AUDIO_IO_HANDLE_NONE)
+ {
+ }
+@@ -8846,6 +8933,7 @@ uint32_t AudioPolicyManager::setOutputDevices(const char *caller,
+                 nullptr /* patchHandle */, requiresMuteCheck, skipMuteDelay);
+         muteWaitMs += setOutputDevices(__func__, outputDesc->subOutput2(), devices, force, delayMs,
+                 nullptr /* patchHandle */, requiresMuteCheck, skipMuteDelay);
++        updateMono(outputDesc->mIoHandle);
+         return muteWaitMs;
+     }
+ 
+@@ -8946,6 +9034,10 @@ uint32_t AudioPolicyManager::setOutputDevices(const char *caller,
+ 
+     checkSpatializedClientsReroute(outputDesc, filteredDevices);
+ 
++    // Route doi: bat/tat mono theo loa trong, khong giu co cu khi sang tai nghe/BT/USB.
++    updateMono(outputDesc->mIoHandle);
++    invalidateOffloadOrMmapMovedToSpeaker_l(outputDesc, prevDevices);
++
+     return muteWaitMs;
+ }
+ 
+diff --git a/services/audiopolicy/managerdefault/AudioPolicyManager.h b/services/audiopolicy/managerdefault/AudioPolicyManager.h
+index a6e760ec25..8b9435322f 100644
+--- a/services/audiopolicy/managerdefault/AudioPolicyManager.h
++++ b/services/audiopolicy/managerdefault/AudioPolicyManager.h
+@@ -51,6 +51,7 @@
+ #include <PreferredMixerAttributesInfo.h>
+ #include <SoundTriggerSession.h>
+ #include "EngineLibrary.h"
++#include "SpeakerPortraitMono.h"
+ #include "TypeConverter.h"
+ 
+ namespace android {
+@@ -421,6 +422,8 @@ public:
+ 
+         virtual status_t setMasterMono(bool mono);
+         virtual status_t getMasterMono(bool *mono);
++        // Mono rieng cho loa trong khi dang portrait. Khong dung master_mono.
++        virtual status_t setSpeakerPortraitMono(bool mono);
+         virtual float    getStreamVolumeDB(
+                     audio_stream_type_t stream, int index, audio_devices_t device);
+ 
+@@ -1142,6 +1145,8 @@ protected:
+         bool mTtsOutputAvailable;
+ 
+         bool mMasterMono;               // true if we wish to force all outputs to mono
++        // true: ap dung mono chi len output dang gan loa trong (speaker / speaker-safe)
++        bool mSpeakerPortraitMono;
+         AudioPolicyMixCollection mPolicyMixes; // list of registered mixes
+         audio_io_handle_t mMusicEffectOutput;     // output selected for music effects
+ 
+@@ -1361,9 +1366,23 @@ private:
+         void setEngineDeviceConnectionState(const sp<DeviceDescriptor> device,
+                                       audio_policy_dev_state_t state);
+ 
++        // Offload chuyen tu ngoai vao loa trong, hoac MMAP cung duong: invalidate, khong closeOutput.
++        void invalidateOffloadOrMmapMovedToSpeaker_l(const sp<SwAudioOutputDescriptor>& outputDesc,
++                const DeviceVector& previousDevices);
++
+         void updateMono(audio_io_handle_t output) {
++            sp<SwAudioOutputDescriptor> desc = mOutputs.valueFor(output);
++            bool speakerOnly = false;
++            if (desc != nullptr) {
++                const auto types = desc->devices().types();
++                speakerOnly = speaker_portrait_mono::isBuiltinLoudspeakerOnly(
++                        types.begin(), types.end());
++            }
++            // Accessibility master mono van ap dung moi output. Co loa portrait chi them loa trong.
++            const bool mono = speaker_portrait_mono::outputShouldMono(
++                    mMasterMono, mSpeakerPortraitMono, speakerOnly);
+             AudioParameter param;
+-            param.addInt(String8(AudioParameter::keyMonoOutput), (int)mMasterMono);
++            param.addInt(String8(AudioParameter::keyMonoOutput), mono ? 1 : 0);
+             mpClientInterface->setParameters(output, param.toString());
+         }
+ 
+diff --git a/services/audiopolicy/managerdefault/SpeakerPortraitMono.h b/services/audiopolicy/managerdefault/SpeakerPortraitMono.h
+new file mode 100644
+index 0000000000..6fea06f702
+--- /dev/null
++++ b/services/audiopolicy/managerdefault/SpeakerPortraitMono.h
+@@ -0,0 +1,64 @@
++#pragma once
++
++#include <cstddef>
++#include <iterator>
++
++// Quyet dinh mono loa trong. Khong dung Settings.System.master_mono.
++namespace speaker_portrait_mono {
++
++constexpr unsigned kDeviceOutSpeaker = 0x2u;
++constexpr unsigned kDeviceOutSpeakerSafe = 0x400000u;
++
++inline bool isBuiltinLoudspeakerType(unsigned deviceType) {
++    return deviceType == kDeviceOutSpeaker || deviceType == kDeviceOutSpeakerSafe;
++}
++
++// Rong hoac co thiet bi khac loa trong -> khong ap dung mono tuy chinh.
++template <typename It>
++inline bool isBuiltinLoudspeakerOnly(It begin, It end) {
++    if (begin == end) {
++        return false;
++    }
++    for (It it = begin; it != end; ++it) {
++        if (!isBuiltinLoudspeakerType(static_cast<unsigned>(*it))) {
++            return false;
++        }
++    }
++    return true;
++}
++
++inline bool isPortrait(int rotationDegrees) {
++    return rotationDegrees == 0 || rotationDegrees == 180;
++}
++
++inline bool isRequested(bool preferenceEnabled, int rotationDegrees) {
++    return preferenceEnabled && isPortrait(rotationDegrees);
++}
++
++// masterMono la Accessibility, ap dung moi output. speakerPortrait chi them loa trong.
++inline bool outputShouldMono(bool accessibilityMasterMono, bool speakerPortraitRequested,
++        bool builtinLoudspeakerOnly) {
++    return accessibilityMasterMono || (speakerPortraitRequested && builtinLoudspeakerOnly);
++}
++
++// Offload da mo o thiet bi ngoai, roi chuyen sang loa trong khi co dang bat.
++inline bool shouldInvalidateOffloadMovedToSpeaker(bool speakerPortraitMono, bool compressOffload,
++        bool nowBuiltinSpeakerOnly, bool previouslyBuiltinSpeakerOnly) {
++    return speakerPortraitMono && compressOffload && nowBuiltinSpeakerOnly
++            && !previouslyBuiltinSpeakerOnly;
++}
++
++// MMAP_NOIRQ khong di qua mixer/DIRECT write. Chi tu choi khi dung loa trong.
++inline bool shouldRefuseMmapOnSpeaker(bool speakerPortraitMono, bool mmapNoIrq,
++        bool builtinLoudspeakerOnly) {
++    return speakerPortraitMono && mmapNoIrq && builtinLoudspeakerOnly;
++}
++
++// MMAP da mo o thiet bi ngoai, roi chuyen sang loa trong. Khong dong output trong setOutputDevices.
++inline bool shouldInvalidateMmapMovedToSpeaker(bool speakerPortraitMono, bool mmapNoIrq,
++        bool nowBuiltinSpeakerOnly, bool previouslyBuiltinSpeakerOnly) {
++    return speakerPortraitMono && mmapNoIrq && nowBuiltinSpeakerOnly
++            && !previouslyBuiltinSpeakerOnly;
++}
++
++}  // namespace speaker_portrait_mono
+diff --git a/services/audiopolicy/managerdefault/host/SpeakerPortraitMonoPolicyCheck.java b/services/audiopolicy/managerdefault/host/SpeakerPortraitMonoPolicyCheck.java
+new file mode 100644
+index 0000000000..6015176598
+--- /dev/null
++++ b/services/audiopolicy/managerdefault/host/SpeakerPortraitMonoPolicyCheck.java
+@@ -0,0 +1,27 @@
++package com.android.server.audio;
++
++// Host check. Khong nam trong src Soong cua services.
++public final class SpeakerPortraitMonoPolicyCheck {
++    public static void main(String[] args) {
++        check(SpeakerPortraitMonoPolicy.degreesFromSurfaceRotation(0) == 0, "rot 0");
++        check(SpeakerPortraitMonoPolicy.degreesFromSurfaceRotation(1) == 90, "rot 90");
++        check(SpeakerPortraitMonoPolicy.degreesFromSurfaceRotation(2) == 180, "rot 180");
++        check(SpeakerPortraitMonoPolicy.degreesFromSurfaceRotation(3) == 270, "rot 270");
++        check(SpeakerPortraitMonoPolicy.degreesFromSurfaceRotation(9)
++                == SpeakerPortraitMonoPolicy.ROTATION_UNKNOWN, "unknown surface");
++        check(SpeakerPortraitMonoPolicy.isRequested(true, 0), "portrait pref");
++        check(SpeakerPortraitMonoPolicy.isRequested(true, 180), "reverse portrait");
++        check(!SpeakerPortraitMonoPolicy.isRequested(true, 90), "landscape same pref");
++        check(!SpeakerPortraitMonoPolicy.isRequested(true, 270), "reverse landscape");
++        check(!SpeakerPortraitMonoPolicy.isRequested(true, SpeakerPortraitMonoPolicy.ROTATION_UNKNOWN),
++                "unknown does not keep portrait");
++        check(!SpeakerPortraitMonoPolicy.isRequested(false, 0), "pref off");
++        System.out.println("ok");
++    }
++
++    private static void check(boolean cond, String name) {
++        if (!cond) {
++            throw new AssertionError(name);
++        }
++    }
++}
+diff --git a/services/audiopolicy/managerdefault/speaker_portrait_mono_test.cpp b/services/audiopolicy/managerdefault/speaker_portrait_mono_test.cpp
+new file mode 100644
+index 0000000000..f2cfb9bb63
+--- /dev/null
++++ b/services/audiopolicy/managerdefault/speaker_portrait_mono_test.cpp
+@@ -0,0 +1,197 @@
++#include "SpeakerPortraitMono.h"
++#include "../../audioflinger/DirectPcmMono.h"
++
++#include <cstdint>
++#include <cstdio>
++#include <cstdlib>
++#include <vector>
++
++using direct_pcm_mono::averageAudioChannels;
++using direct_pcm_mono::frameStrideMatches;
++using direct_pcm_mono::PcmSample;
++using direct_pcm_mono::readS24Le;
++using direct_pcm_mono::shouldBlendDirectPcm;
++using speaker_portrait_mono::isBuiltinLoudspeakerOnly;
++using speaker_portrait_mono::isRequested;
++using speaker_portrait_mono::outputShouldMono;
++using speaker_portrait_mono::shouldInvalidateMmapMovedToSpeaker;
++using speaker_portrait_mono::shouldInvalidateOffloadMovedToSpeaker;
++using speaker_portrait_mono::shouldRefuseMmapOnSpeaker;
++
++static int gFailures = 0;
++
++static void expect(bool cond, const char* name) {
++    if (!cond) {
++        std::fprintf(stderr, "FAIL %s\n", name);
++        gFailures++;
++    }
++}
++
++int main() {
++    expect(isRequested(true, 0), "pref on portrait 0");
++    expect(isRequested(true, 180), "pref on portrait 180");
++    expect(!isRequested(true, 90), "pref on landscape 90");
++    expect(!isRequested(true, 270), "pref on landscape 270");
++    expect(!isRequested(false, 0), "pref off portrait");
++    expect(!isRequested(true, -1), "unknown rotation");
++
++    const unsigned speaker = speaker_portrait_mono::kDeviceOutSpeaker;
++    const unsigned safe = speaker_portrait_mono::kDeviceOutSpeakerSafe;
++    const unsigned headset = 0x4u;
++    const unsigned a2dp = 0x80u;
++
++    std::vector<unsigned> empty;
++    std::vector<unsigned> spk{speaker};
++    std::vector<unsigned> both{speaker, safe};
++    std::vector<unsigned> wired{speaker, headset};
++    std::vector<unsigned> bt{a2dp};
++
++    expect(!isBuiltinLoudspeakerOnly(empty.begin(), empty.end()), "empty route");
++    expect(isBuiltinLoudspeakerOnly(spk.begin(), spk.end()), "speaker");
++    expect(isBuiltinLoudspeakerOnly(both.begin(), both.end()), "speaker safe");
++    expect(!isBuiltinLoudspeakerOnly(wired.begin(), wired.end()), "speaker plus wired");
++    expect(!isBuiltinLoudspeakerOnly(bt.begin(), bt.end()), "a2dp");
++
++    expect(outputShouldMono(true, false, false), "a11y mono keeps headphone");
++    expect(!outputShouldMono(false, false, true), "pref off speaker");
++    expect(outputShouldMono(false, true, true), "portrait request speaker");
++    expect(!outputShouldMono(false, true, false), "portrait request external");
++    expect(outputShouldMono(true, false, false), "a11y independent of pref");
++
++    expect(shouldInvalidateOffloadMovedToSpeaker(true, true, true, false),
++            "offload external to speaker");
++    expect(!shouldInvalidateOffloadMovedToSpeaker(true, true, true, true),
++            "offload already on speaker");
++    expect(!shouldInvalidateOffloadMovedToSpeaker(true, true, false, true),
++            "offload speaker to external");
++    expect(!shouldInvalidateOffloadMovedToSpeaker(true, false, true, false),
++            "direct pcm route change is not offload invalidate");
++    expect(!shouldInvalidateOffloadMovedToSpeaker(false, true, true, false),
++            "offload move while preference off");
++
++    expect(shouldRefuseMmapOnSpeaker(true, true, true), "mmap speaker refused");
++    expect(!shouldRefuseMmapOnSpeaker(true, true, false), "mmap external stays");
++    expect(!shouldRefuseMmapOnSpeaker(false, true, true), "mmap speaker when request off");
++    expect(!shouldRefuseMmapOnSpeaker(true, false, true), "non-mmap speaker not refused here");
++
++    expect(shouldInvalidateMmapMovedToSpeaker(true, true, true, false),
++            "mmap external to speaker");
++    expect(!shouldInvalidateMmapMovedToSpeaker(true, true, true, true),
++            "mmap already on speaker");
++    expect(!shouldInvalidateMmapMovedToSpeaker(true, true, false, true),
++            "mmap speaker to external");
++    expect(!shouldInvalidateMmapMovedToSpeaker(true, false, true, false),
++            "non-mmap route change");
++    expect(!shouldInvalidateMmapMovedToSpeaker(false, true, true, false),
++            "mmap move while preference off");
++
++    expect(shouldBlendDirectPcm(true, true, true), "direct pcm mono");
++    expect(!shouldBlendDirectPcm(true, false, true), "offload thread skips blend");
++    expect(!shouldBlendDirectPcm(false, true, true), "direct without mono param");
++    expect(!shouldBlendDirectPcm(true, true, false), "compressed direct skips blend");
++
++    int16_t stereo[4] = {0, 200, 10, 30};
++    averageAudioChannels(stereo, PcmSample::kS16, 2, 0, 2);
++    expect(stereo[0] == 100 && stereo[1] == 100 && stereo[2] == 20 && stereo[3] == 20,
++            "s16 stereo frames");
++
++    int16_t haptic[3] = {0, 100, 7};
++    averageAudioChannels(haptic, PcmSample::kS16, 2, 1, 1);
++    expect(haptic[0] == 50 && haptic[1] == 50 && haptic[2] == 7, "haptic preserved");
++
++    int32_t pcm32[2] = {0, 1000};
++    averageAudioChannels(pcm32, PcmSample::kS32, 2, 0, 1);
++    expect(pcm32[0] == 500 && pcm32[1] == 500, "s32 dsee-style");
++
++    float pcmf[2] = {1.f, 3.f};
++    averageAudioChannels(pcmf, PcmSample::kFloat, 2, 0, 1);
++    expect(pcmf[0] == 2.f && pcmf[1] == 2.f, "float stereo");
++
++    int16_t mono[1] = {9};
++    averageAudioChannels(mono, PcmSample::kS16, 1, 0, 1);
++    expect(mono[0] == 9, "already mono unchanged");
++    averageAudioChannels(stereo, PcmSample::kS16, 2, 0, 2);
++    expect(stereo[0] == 100 && stereo[1] == 100, "second blend stays mono");
++
++    auto packS24 = [](uint8_t* p, int32_t value) {
++        direct_pcm_mono::writeS24Le(p, value);
++    };
++    auto expectS24 = [&](const uint8_t* p, int32_t value, const char* name) {
++        expect(readS24Le(p) == value, name);
++    };
++
++    // Hai khung stereo, khong can 4 byte: bat dau o byte le.
++    uint8_t packed[1 + 12] = {};
++    uint8_t* frames = packed + 1;
++    packS24(frames + 0, 1000);          // L only
++    packS24(frames + 3, 0);
++    packS24(frames + 6, 0);             // R only
++    packS24(frames + 9, 2000);
++    averageAudioChannels(frames, PcmSample::kS24Packed, 2, 0, 2);
++    expectS24(frames + 0, 500, "s24 L-only L");
++    expectS24(frames + 3, 500, "s24 L-only R");
++    expectS24(frames + 6, 1000, "s24 R-only L");
++    expectS24(frames + 9, 1000, "s24 R-only R");
++    expect(packed[0] == 0, "s24 guard byte before unaligned buffer");
++
++    packS24(frames + 0, -1000);
++    packS24(frames + 3, -500);
++    averageAudioChannels(frames, PcmSample::kS24Packed, 2, 0, 1);
++    expectS24(frames + 0, -750, "s24 negative L");
++    expectS24(frames + 3, -750, "s24 negative R");
++
++    packS24(frames + 0, 1000);
++    packS24(frames + 3, -1000);
++    averageAudioChannels(frames, PcmSample::kS24Packed, 2, 0, 1);
++    expectS24(frames + 0, 0, "s24 opposite L");
++    expectS24(frames + 3, 0, "s24 opposite R");
++
++    packS24(frames + 0, direct_pcm_mono::kS24Max);
++    packS24(frames + 3, direct_pcm_mono::kS24Min);
++    averageAudioChannels(frames, PcmSample::kS24Packed, 2, 0, 1);
++    expectS24(frames + 0, 0, "s24 full-scale opposite truncates toward zero");
++    expectS24(frames + 3, 0, "s24 full-scale opposite R");
++
++    packS24(frames + 0, direct_pcm_mono::kS24Max);
++    packS24(frames + 3, direct_pcm_mono::kS24Max);
++    averageAudioChannels(frames, PcmSample::kS24Packed, 2, 0, 1);
++    expectS24(frames + 0, direct_pcm_mono::kS24Max, "s24 full positive stays");
++    expectS24(frames + 3, direct_pcm_mono::kS24Max, "s24 full positive R");
++
++    packS24(frames + 0, direct_pcm_mono::kS24Min);
++    packS24(frames + 3, direct_pcm_mono::kS24Min);
++    averageAudioChannels(frames, PcmSample::kS24Packed, 2, 0, 1);
++    expectS24(frames + 0, direct_pcm_mono::kS24Min, "s24 full negative stays");
++    expectS24(frames + 3, direct_pcm_mono::kS24Min, "s24 full negative R");
++
++    // Stereo + haptic 24-bit. Haptic giu nguyen.
++    uint8_t haptic24[9];
++    packS24(haptic24 + 0, 0);
++    packS24(haptic24 + 3, 300);
++    packS24(haptic24 + 6, -12345);
++    averageAudioChannels(haptic24, PcmSample::kS24Packed, 2, 1, 1);
++    expectS24(haptic24 + 0, 150, "s24 haptic audio L");
++    expectS24(haptic24 + 3, 150, "s24 haptic audio R");
++    expectS24(haptic24 + 6, -12345, "s24 haptic sample");
++
++    uint8_t mono24[3];
++    packS24(mono24, 42);
++    averageAudioChannels(mono24, PcmSample::kS24Packed, 1, 0, 1);
++    expectS24(mono24, 42, "s24 mono input unchanged");
++
++    expect(frameStrideMatches(6, 2, 0, 3), "s24 stereo frame size");
++    expect(frameStrideMatches(9, 2, 1, 3), "s24 stereo plus haptic frame size");
++    expect(!frameStrideMatches(8, 2, 0, 3), "s24 rejects int32 stride");
++    const size_t writeLength = 12;
++    const size_t frameSize = 6;
++    const size_t framesOut = writeLength / frameSize;
++    expect(framesOut * frameSize == writeLength, "partial-write length is whole frames");
++    expect(framesOut * (2 + 0) * 3 == writeLength, "blend covers the same bytes as mSinkBuffer");
++
++    if (gFailures != 0) {
++        std::fprintf(stderr, "%d failed\n", gFailures);
++        return 1;
++    }
++    std::puts("ok");
++    return 0;
++}
+diff --git a/services/audiopolicy/service/AudioPolicyInterfaceImpl.cpp b/services/audiopolicy/service/AudioPolicyInterfaceImpl.cpp
+index 9917334e9a..dc02c2ee17 100644
+--- a/services/audiopolicy/service/AudioPolicyInterfaceImpl.cpp
++++ b/services/audiopolicy/service/AudioPolicyInterfaceImpl.cpp
+@@ -2273,6 +2273,19 @@ Status AudioPolicyService::setMasterMono(bool mono)
+     return binderStatusFromStatusT(mAudioPolicyManager->setMasterMono(mono));
+ }
+ 
++Status AudioPolicyService::setSpeakerPortraitMono(bool mono)
++{
++    if (mAudioPolicyManager == NULL) {
++        return binderStatusFromStatusT(NO_INIT);
++    }
++    if (!CHECK_PERM(MODIFY_AUDIO_SETTINGS, IPCThreadState::self()->getCallingUid())) {
++        return binderStatusFromStatusT(PERMISSION_DENIED);
++    }
++    audio_utils::lock_guard _l(mMutex);
++    AutoCallerClear acc;
++    return binderStatusFromStatusT(mAudioPolicyManager->setSpeakerPortraitMono(mono));
++}
++
+ Status AudioPolicyService::getMasterMono(bool* _aidl_return)
+ {
+     if (mAudioPolicyManager == NULL) {
+diff --git a/services/audiopolicy/service/AudioPolicyService.cpp b/services/audiopolicy/service/AudioPolicyService.cpp
+index 51105968e2..86817f033f 100644
+--- a/services/audiopolicy/service/AudioPolicyService.cpp
++++ b/services/audiopolicy/service/AudioPolicyService.cpp
+@@ -188,6 +188,10 @@ BINDER_METHOD_ENTRY(getRegisteredPolicyMixes) \
+ BINDER_METHOD_ENTRY(getPermissionController) \
+ BINDER_METHOD_ENTRY(getMmapPolicyInfos) \
+ BINDER_METHOD_ENTRY(getMmapPolicyForDevice) \
++BINDER_METHOD_ENTRY(setHardeningOverride) \
++BINDER_METHOD_ENTRY(getFlushFromFrameSupport) \
++BINDER_METHOD_ENTRY(useMmapForPcmOffload) \
++BINDER_METHOD_ENTRY(setSpeakerPortraitMono) \
+                                                      \
+ // singleton for Binder Method Statistics for IAudioPolicyService
+ static auto& getIAudioPolicyServiceStatistics() {
+@@ -1415,6 +1419,7 @@ status_t AudioPolicyService::onTransact(
+         case TRANSACTION_registerPolicyMixes:
+         case TRANSACTION_updatePolicyMixes:
+         case TRANSACTION_setMasterMono:
++        case TRANSACTION_setSpeakerPortraitMono:
+         case TRANSACTION_getSurroundFormats:
+         case TRANSACTION_getReportedSurroundFormats:
+         case TRANSACTION_setSurroundFormatEnabled:
+diff --git a/services/audiopolicy/service/AudioPolicyService.h b/services/audiopolicy/service/AudioPolicyService.h
+index 03fe95919f..9564f2ce84 100644
+--- a/services/audiopolicy/service/AudioPolicyService.h
++++ b/services/audiopolicy/service/AudioPolicyService.h
+@@ -238,6 +238,7 @@ public:
+     binder::Status stopAudioSource(int32_t portId) override;
+     binder::Status setMasterMono(bool mono) override;
+     binder::Status getMasterMono(bool* _aidl_return) override;
++    binder::Status setSpeakerPortraitMono(bool mono) override;
+     binder::Status getStreamVolumeDB(AudioStreamType stream, int32_t index,
+                                      const AudioDeviceDescription& device,
+                                      float* _aidl_return) override;
+-- 
+2.53.0
+

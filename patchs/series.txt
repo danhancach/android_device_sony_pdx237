@@ -12,6 +12,7 @@ frameworks/av|frameworks/av/0003-media-sony-port.patch
 frameworks/av|frameworks/av/0004-preserve-dolby-state-on-dms-reconnect.patch
 frameworks/av|frameworks/av/services/audiopolicy/enginedefault/src/prefer-builtin-mic-for-camcorder.patch
 frameworks/av|frameworks/av/services/audiopolicy/managerdefault/0001-APM-live-volume-SPEAKER-SAFE-family.patch
+frameworks/av|frameworks/av/0005-speaker-portrait-mono.patch
 
 # 3. frameworks/base: SSOT fork danhancach/frameworks_base (cnb) — lop 0.
 # AudioService hardening / SPEAKER_SAFE da nam tren fork; khong hub A/B.

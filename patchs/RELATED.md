@@ -21,3 +21,16 @@ Hub liên quan (xem `series.txt`): `frameworks/av/0001`–`0004`, APM SPEAKER_SA
 Mode transition / anti-pop (cùng `hardware/sony` SoundEnhancement + `vendor/sony/audio/DSEE` `invalidate_sleep_*`): `0001` settle khi `dsee_hx_state=0`; `0004` giữ Dolby HAL khi DMS reconnect.
 
 `0001` EffectDapController: không gửi `SET_BYPASS` / `SKIP_HARD_BYPASS` xuống `libswdap` (blob reject). Bypass qua `mBypassed` + HAL `dle_ds_state`.
+
+## Speaker mono (portrait built-in speakers)
+
+- Framework request and display rotation: fork `danhancach/frameworks_base`,
+  `frameworks/base`; no duplicate framework patch in this hub.
+- Output policy and DIRECT PCM blending: `frameworks/av/0005-speaker-portrait-mono.patch`.
+  Custom mono applies only to built-in speaker/speaker-safe outputs.
+- Preference and Quick Settings tile: `hardware/sony`, SoundEnhancement.
+- Service ownership: `vendor/sony/audio`, daxService no longer writes Accessibility
+  `master_mono`; original Dolby rotation tuning remains.
+
+These components require a coherent framework, JNI, native audio, and app build.
+Host checks do not validate device playback or AAudio/offload reconnection.
